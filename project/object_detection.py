@@ -24,7 +24,7 @@ class CameraNode(Node):
         camera_image_info_topic = '/a200_0000/sensors/camera_0/color/camera_info'
         camera_depth_topic = '/a200_0000/sensors/camera_0/depth/image'
         camera_depth_info_topic = '/a200_0000/sensors/camera_0/depth/camera_info'
-        YOLO_MODEL_PATH = 'yolov8n.pt'
+        YOLO_MODEL_PATH = 'yolov8n-seg.pt'
         self.target_frame = 'base_link'
 
         self.model = YOLO(YOLO_MODEL_PATH)
@@ -60,17 +60,23 @@ class CameraNode(Node):
             self.get_logger().info("CameraInfo not yet received.")
             return
 
-        results = self.model.track(frame)
+        results = self.model.track(frame, persist=True)
 
         for result in results:
+            if result.masks is None:
+                continue
             boxes = result.boxes
-            for box in boxes:
+            masks = result.masks.data
+            for i, box in enumerate(boxes):
                 x1, y1, x2, y2 = box.xyxy[0].cpu().numpy().astype(int)
                 confidence = box.conf[0].cpu().numpy()
                 class_id = int(box.cls[0].cpu().numpy())
                 class_name = self.model.names[class_id]
 
-                point_3d = self.get_3d_coordinates(box)
+                # Get segmentation mask for this object
+                mask = masks[i].cpu().numpy().astype(bool)
+
+                point_3d = self.get_3d_coordinates(mask)
 
                 if point_3d is None:
                     continue
@@ -91,6 +97,12 @@ class CameraNode(Node):
                     continue
 
                 # self.get_logger().info(f"Detected {class_name} at 3D coordinates (camera frame): {point_3d}, (world frame): ({point_base.point.x}, {point_base.point.y}, {point_base.point.z})")
+
+
+                overlay = frame.copy()
+                overlay[mask] = (0, 255, 0)
+
+                frame = cv2.addWeighted(frame, 0.7, overlay, 0.3, 0)
 
                 cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
                 cv2.putText(frame, f"{class_name} {confidence:.2f}", (x1, y1 - 10),
@@ -122,54 +134,66 @@ class CameraNode(Node):
     def depth_info_callback(self, msg):
         self.depth_info = msg
 
-    def get_depth_of_box(self, box):
-        x1, y1, x2, y2 = box.xyxy[0].cpu().numpy().astype(int)
-        u = int((x1 + x2) / 2)
-        v = int((y1 + y2) / 2)
+    def get_depth_of_mask(self, mask):
 
-        window_size = 5
+        # Make sure the mask and depth image have the same dimensions
+        if mask.shape != self.depth_frame.shape:
+            self.get_logger().warn(
+                f"Mask shape {mask.shape} does not match "
+                f"depth shape {self.depth_frame.shape}"
+            )
+            return None
 
-        half = window_size // 2
+        # Get depth values belonging to the object
+        object_depths = self.depth_frame[mask]
 
-        region = self.depth_frame[
-            v-half:v+half+1,
-            u-half:u+half+1
-        ]
-
-        # Remove invalid values
-        valid_depths = region[
-            np.isfinite(region) &
-            (region > 0)
+        # Remove invalid depth values
+        valid_depths = object_depths[
+            np.isfinite(object_depths) &
+            (object_depths > 0)
         ]
 
         if len(valid_depths) == 0:
             return None
 
-        return float(np.median(valid_depths))
+        # Use a lower percentile to approximate the
+        # front surface of the object
+        depth = np.percentile(valid_depths, 25)
 
-    def get_3d_coordinates(self, box):
+        return float(depth)
+
+    def get_3d_coordinates(self, mask):
         if self.camera_info is None:
-            self.get_logger().error("Camera model not initialized.")
+            self.get_logger().error(
+                "Camera model not initialized."
+            )
             return None
 
-        # Find the depth value of the bounding box
-        depth = self.get_depth_of_box(box)
+        depth = self.get_depth_of_mask(mask)
 
         if depth is None:
-            self.get_logger().warn("No valid depth found for object.")
+            self.get_logger().warn(
+                "No valid depth found inside object mask."
+            )
             return None
 
-        x1, y1, x2, y2 = box.xyxy[0].cpu().numpy().astype(int)
-        u = int((x1 + x2) / 2)
-        v = int((y1 + y2) / 2)
+        # Find the center of the mask
+        ys, xs = np.where(mask)
 
-        ray = self.camera_model.projectPixelTo3dRay((u, v))
+        if len(xs) == 0:
+            return None
+
+        u = int(np.mean(xs))
+        v = int(np.mean(ys))
+
+        # Convert pixel to 3D ray
+        ray = self.camera_model.projectPixelTo3dRay(
+            (u, v)
+        )
+
         ray = np.array(ray)
 
-        # Normalize the ray
-        # ray /= np.linalg.norm(ray)
-
-        # Scale the ray by the depth value
+        # Do NOT normalize the ray
         point_3d = ray * depth
 
         return point_3d
