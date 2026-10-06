@@ -90,14 +90,16 @@ class CameraNode(Node):
                     self.get_logger().warn(f"Could not transform point to {self.target_frame}: {ex}")
                     continue
 
-                self.get_logger().info(f"Detected {class_name} at 3D coordinates (camera frame): {point_3d}, (world frame): ({point_base.point.x}, {point_base.point.y}, {point_base.point.z})")
+                # self.get_logger().info(f"Detected {class_name} at 3D coordinates (camera frame): {point_3d}, (world frame): ({point_base.point.x}, {point_base.point.y}, {point_base.point.z})")
 
-                # cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-                # cv2.putText(frame, f"{class_name} {confidence:.2f}", (x1, y1 - 10),
-                #             cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+                cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                cv2.putText(frame, f"{class_name} {confidence:.2f}", (x1, y1 - 10),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+                cv2.putText(frame, f"3D: ({point_base.point.x:.2f}, {point_base.point.y:.2f}, {point_base.point.z:.2f})", (x1, y2 + 20),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
 
-        # cv2.imshow("RealSense", frame)
-        # cv2.waitKey(1)
+        cv2.imshow("RealSense", frame)
+        cv2.waitKey(1)
 
     def depth_callback(self, msg):
         depth_frame = self.bridge.imgmsg_to_cv2(msg, desired_encoding='passthrough')
