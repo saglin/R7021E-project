@@ -12,6 +12,9 @@ from sensor_msgs.msg import CameraInfo
 from image_geometry import PinholeCameraModel
 from geometry_msgs.msg import PointStamped
 
+from vision_msgs.msg import Detection3DArray, Detection3D
+from vision_msgs.msg import ObjectHypothesisWithPose
+
 import tf2_ros
 from tf2_geometry_msgs import do_transform_point
 
@@ -25,7 +28,9 @@ class CameraNode(Node):
         camera_depth_topic = '/a200_0000/sensors/camera_0/depth/image'
         camera_depth_info_topic = '/a200_0000/sensors/camera_0/depth/camera_info'
         YOLO_MODEL_PATH = 'yolov8n-seg.pt'
-        self.target_frame = 'base_link'
+        self.target_frame = 'base_link'     # Change to 'map' later
+
+        detected_objects_topic = '/detected_objects'
 
         self.model = YOLO(YOLO_MODEL_PATH)
 
@@ -39,6 +44,8 @@ class CameraNode(Node):
                                                                 self.image_info_callback, 10)
         self.depth_info_subscription = self.create_subscription(CameraInfo, camera_depth_info_topic,
                                                                 self.depth_info_callback, 10)
+
+        self.object_publisher = self.create_publisher(Detection3DArray, detected_objects_topic, 10)
 
         self.tf_buffer = tf2_ros.Buffer()
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
@@ -59,6 +66,10 @@ class CameraNode(Node):
         if self.camera_info is None:
             self.get_logger().info("CameraInfo not yet received.")
             return
+
+        detections_msg = Detection3DArray()
+        detections_msg.header.stamp = msg.header.stamp
+        detections_msg.header.frame_id = self.target_frame
 
         results = self.model.track(frame, persist=True)
 
@@ -98,6 +109,42 @@ class CameraNode(Node):
 
                 # self.get_logger().info(f"Detected {class_name} at 3D coordinates (camera frame): {point_3d}, (world frame): ({point_base.point.x}, {point_base.point.y}, {point_base.point.z})")
 
+                detection = Detection3D()
+
+                # Object classification
+                hypothesis = ObjectHypothesisWithPose()
+                hypothesis.hypothesis.class_id = class_name
+                hypothesis.hypothesis.score = float(confidence)
+
+                # Object position
+                hypothesis.pose.pose.position.x = point_base.point.x
+                hypothesis.pose.pose.position.y = point_base.point.y
+                hypothesis.pose.pose.position.z = point_base.point.z
+
+                # We don't estimate orientation, so use identity quaternion
+                hypothesis.pose.pose.orientation.x = 0.0
+                hypothesis.pose.pose.orientation.y = 0.0
+                hypothesis.pose.pose.orientation.z = 0.0
+                hypothesis.pose.pose.orientation.w = 1.0
+
+                detection.results.append(hypothesis)
+
+                # Put the position into the 3D bounding box center
+                detection.bbox.center.position.x = point_base.point.x
+                detection.bbox.center.position.y = point_base.point.y
+                detection.bbox.center.position.z = point_base.point.z
+
+                # We don't currently know the physical 3D size
+                detection.bbox.size.x = 0.0
+                detection.bbox.size.y = 0.0
+                detection.bbox.size.z = 0.0
+
+                # YOLO tracking ID
+                if box.id is not None:
+                    detection.id = str(int(box.id[0].cpu().numpy()))
+
+                detections_msg.detections.append(detection)
+
 
                 overlay = frame.copy()
                 overlay[mask] = (0, 255, 0)
@@ -110,6 +157,7 @@ class CameraNode(Node):
                 cv2.putText(frame, f"3D: ({point_base.point.x:.2f}, {point_base.point.y:.2f}, {point_base.point.z:.2f})", (x1, y2 + 20),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
 
+        self.object_publisher.publish(detections_msg)
         cv2.imshow("RealSense", frame)
         cv2.waitKey(1)
 
