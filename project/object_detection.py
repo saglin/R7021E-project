@@ -136,7 +136,6 @@ class CameraNode(Node):
 
     def get_depth_of_mask(self, mask):
 
-        # Make sure the mask and depth image have the same dimensions
         if mask.shape != self.depth_frame.shape:
             self.get_logger().warn(
                 f"Mask shape {mask.shape} does not match "
@@ -144,7 +143,7 @@ class CameraNode(Node):
             )
             return None
 
-        # Get depth values belonging to the object
+        # Get all depth values inside the segmentation mask
         object_depths = self.depth_frame[mask]
 
         # Remove invalid depth values
@@ -153,12 +152,37 @@ class CameraNode(Node):
             (object_depths > 0)
         ]
 
-        if len(valid_depths) == 0:
+        if len(valid_depths) < 10:
+            self.get_logger().warn(
+                "Not enough valid depth pixels inside mask."
+            )
             return None
 
-        # Use a lower percentile to approximate the
-        # front surface of the object
-        depth = np.percentile(valid_depths, 25)
+        # Calculate median depth
+        median_depth = np.median(valid_depths)
+
+        # Calculate Median Absolute Deviation (MAD)
+        absolute_deviation = np.abs(valid_depths - median_depth)
+
+        mad = np.median(absolute_deviation)
+
+        # Avoid division by zero
+        if mad < 1e-6:
+            filtered_depths = valid_depths
+        else:
+
+            # Robust modified z-score
+            modified_z_score = (0.6745 * absolute_deviation / mad)
+
+            # Keep only non-outliers
+            filtered_depths = valid_depths[modified_z_score < 3.5]
+
+        if len(filtered_depths) < 10:
+            self.get_logger().warn("Too few depth pixels remain after outlier rejection.")
+            return None
+
+        # Calculate final depth estimate
+        depth = np.median(filtered_depths)
 
         return float(depth)
 
