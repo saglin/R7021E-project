@@ -14,6 +14,7 @@ from geometry_msgs.msg import PointStamped
 
 from vision_msgs.msg import Detection3DArray, Detection3D
 from vision_msgs.msg import ObjectHypothesisWithPose
+from visualization_msgs.msg import Marker, MarkerArray
 
 import tf2_ros
 from tf2_geometry_msgs import do_transform_point
@@ -46,6 +47,7 @@ class CameraNode(Node):
                                                                 self.depth_info_callback, 10)
 
         self.object_publisher = self.create_publisher(Detection3DArray, detected_objects_topic, 10)
+        self.marker_publisher = self.create_publisher(MarkerArray, '/detection_markers', 10)
 
         self.tf_buffer = tf2_ros.Buffer()
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
@@ -70,6 +72,8 @@ class CameraNode(Node):
         detections_msg = Detection3DArray()
         detections_msg.header.stamp = msg.header.stamp
         detections_msg.header.frame_id = self.target_frame
+
+        markers = MarkerArray() # For visualization in RViz
 
         results = self.model.track(frame, persist=True)
 
@@ -157,7 +161,13 @@ class CameraNode(Node):
                 cv2.putText(frame, f"3D: ({point_base.point.x:.2f}, {point_base.point.y:.2f}, {point_base.point.z:.2f})", (x1, y2 + 20),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
 
+                # Create a visualization marker for RViz
+                marker, text_marker = self.create_marker(point_base, class_name, box, msg.header.stamp, markers)
+                markers.markers.append(marker)
+                markers.markers.append(text_marker)
+
         self.object_publisher.publish(detections_msg)
+        self.marker_publisher.publish(markers)
         cv2.imshow("RealSense", frame)
         cv2.waitKey(1)
 
@@ -278,6 +288,48 @@ class CameraNode(Node):
         point_stamped.point.y = point_3d[1]
         point_stamped.point.z = point_3d[2]
         return point_stamped
+
+    def create_marker(self, point_base, class_name, box, stamp, markers):
+        marker = Marker()
+        marker.header.stamp = stamp
+        marker.header.frame_id = self.target_frame
+        marker.ns = "detections"
+        if box.id is not None:
+            track_id = int(box.id[0].cpu().numpy())
+            marker.id = track_id
+        marker.type = Marker.SPHERE
+        marker.action = Marker.ADD
+        marker.pose.position.x = point_base.point.x
+        marker.pose.position.y = point_base.point.y
+        marker.pose.position.z = point_base.point.z
+        marker.pose.orientation.w = 1.0
+        marker.scale.x = 0.15
+        marker.scale.y = 0.15
+        marker.scale.z = 0.15
+        marker.color.a = 1.0
+        marker.color.r = 0.0
+        marker.color.g = 1.0
+        marker.color.b = 0.0
+
+        text_marker = Marker()
+        text_marker.header.stamp = stamp
+        text_marker.header.frame_id = self.target_frame
+        text_marker.ns = "detection_labels"
+        text_marker.id = 1000 + len(markers.markers)
+        text_marker.type = Marker.TEXT_VIEW_FACING
+        text_marker.action = Marker.ADD
+        text_marker.pose.position.x = point_base.point.x
+        text_marker.pose.position.y = point_base.point.y
+        text_marker.pose.position.z = point_base.point.z + 0.2
+        text_marker.pose.orientation.w = 1.0
+        text_marker.scale.z = 0.15
+        text_marker.color.a = 1.0
+        text_marker.color.r = 1.0
+        text_marker.color.g = 1.0
+        text_marker.color.b = 1.0
+        text_marker.text = class_name
+
+        return marker, text_marker
 
 def main(args=None):
     rclpy.init(args=args)
