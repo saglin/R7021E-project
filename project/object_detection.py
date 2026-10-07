@@ -29,7 +29,7 @@ class CameraNode(Node):
         camera_depth_topic = '/a200_0000/sensors/camera_0/depth/image'
         camera_depth_info_topic = '/a200_0000/sensors/camera_0/depth/camera_info'
         YOLO_MODEL_PATH = 'yolov8n-seg.pt'
-        self.target_frame = 'base_link'     # Change to 'map' later
+        self.target_frame = 'odom'     # Change to 'map' later
 
         detected_objects_topic = '/detected_objects'
 
@@ -113,53 +113,10 @@ class CameraNode(Node):
 
                 # self.get_logger().info(f"Detected {class_name} at 3D coordinates (camera frame): {point_3d}, (world frame): ({point_base.point.x}, {point_base.point.y}, {point_base.point.z})")
 
-                detection = Detection3D()
-
-                # Object classification
-                hypothesis = ObjectHypothesisWithPose()
-                hypothesis.hypothesis.class_id = class_name
-                hypothesis.hypothesis.score = float(confidence)
-
-                # Object position
-                hypothesis.pose.pose.position.x = point_base.point.x
-                hypothesis.pose.pose.position.y = point_base.point.y
-                hypothesis.pose.pose.position.z = point_base.point.z
-
-                # We don't estimate orientation, so use identity quaternion
-                hypothesis.pose.pose.orientation.x = 0.0
-                hypothesis.pose.pose.orientation.y = 0.0
-                hypothesis.pose.pose.orientation.z = 0.0
-                hypothesis.pose.pose.orientation.w = 1.0
-
-                detection.results.append(hypothesis)
-
-                # Put the position into the 3D bounding box center
-                detection.bbox.center.position.x = point_base.point.x
-                detection.bbox.center.position.y = point_base.point.y
-                detection.bbox.center.position.z = point_base.point.z
-
-                # We don't currently know the physical 3D size
-                detection.bbox.size.x = 0.0
-                detection.bbox.size.y = 0.0
-                detection.bbox.size.z = 0.0
-
-                # YOLO tracking ID
-                if box.id is not None:
-                    detection.id = str(int(box.id[0].cpu().numpy()))
-
+                detection = self.create_detection_msg(point_base, class_name, confidence, box, msg.header.stamp)
                 detections_msg.detections.append(detection)
 
-
-                overlay = frame.copy()
-                overlay[mask] = (0, 255, 0)
-
-                frame = cv2.addWeighted(frame, 0.7, overlay, 0.3, 0)
-
-                cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-                cv2.putText(frame, f"{class_name} {confidence:.2f}", (x1, y1 - 10),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
-                cv2.putText(frame, f"3D: ({point_base.point.x:.2f}, {point_base.point.y:.2f}, {point_base.point.z:.2f})", (x1, y2 + 20),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+                frame = self.draw_bounding_box(frame, box, class_name, confidence, point_base, mask)
 
                 # Create a visualization marker for RViz
                 marker, text_marker = self.create_marker(point_base, class_name, box, msg.header.stamp, markers)
@@ -168,6 +125,8 @@ class CameraNode(Node):
 
         self.object_publisher.publish(detections_msg)
         self.marker_publisher.publish(markers)
+
+        # Display the frame with bounding boxes and masks
         cv2.imshow("RealSense", frame)
         cv2.waitKey(1)
 
@@ -282,12 +241,50 @@ class CameraNode(Node):
 
     def convert_to_point_stamped(self, point_3d, stamp):
         point_stamped = PointStamped()
-        point_stamped.header.stamp = stamp
+        # point_stamped.header.stamp = stamp    # TODO: Use the actual timestamp from the image message for better synchronization
+        point_stamped.header.stamp = rclpy.time.Time().to_msg()
         point_stamped.header.frame_id = self.camera_info.header.frame_id
         point_stamped.point.x = point_3d[0]
         point_stamped.point.y = point_3d[1]
         point_stamped.point.z = point_3d[2]
         return point_stamped
+
+    def create_detection_msg(self, point_base, class_name, confidence, box, stamp):
+        detection = Detection3D()
+
+        # Object classification
+        hypothesis = ObjectHypothesisWithPose()
+        hypothesis.hypothesis.class_id = class_name
+        hypothesis.hypothesis.score = float(confidence)
+
+        # Object position
+        hypothesis.pose.pose.position.x = point_base.point.x
+        hypothesis.pose.pose.position.y = point_base.point.y
+        hypothesis.pose.pose.position.z = point_base.point.z
+
+        # We don't estimate orientation, so use identity quaternion
+        hypothesis.pose.pose.orientation.x = 0.0
+        hypothesis.pose.pose.orientation.y = 0.0
+        hypothesis.pose.pose.orientation.z = 0.0
+        hypothesis.pose.pose.orientation.w = 1.0
+
+        detection.results.append(hypothesis)
+
+        # Put the position into the 3D bounding box center
+        detection.bbox.center.position.x = point_base.point.x
+        detection.bbox.center.position.y = point_base.point.y
+        detection.bbox.center.position.z = point_base.point.z
+
+        # We don't currently know the physical 3D size
+        detection.bbox.size.x = 0.0
+        detection.bbox.size.y = 0.0
+        detection.bbox.size.z = 0.0
+
+        # YOLO tracking ID
+        if box.id is not None:
+            detection.id = str(int(box.id[0].cpu().numpy()))
+
+        return detection
 
     def create_marker(self, point_base, class_name, box, stamp, markers):
         marker = Marker()
@@ -330,6 +327,22 @@ class CameraNode(Node):
         text_marker.text = class_name
 
         return marker, text_marker
+
+    def draw_bounding_box(self, frame, box, class_name, confidence, point_base, mask):
+        overlay = frame.copy()
+        overlay[mask] = (0, 255, 0)
+
+        frame = cv2.addWeighted(frame, 0.7, overlay, 0.3, 0)
+
+        x1, y1, x2, y2 = box.xyxy[0].cpu().numpy().astype(int)
+
+        cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+        cv2.putText(frame, f"{class_name} {confidence:.2f}", (x1, y1 - 10),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+        cv2.putText(frame, f"3D: ({point_base.point.x:.2f}, {point_base.point.y:.2f}, {point_base.point.z:.2f})", (x1, y2 + 20),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+
+        return frame
 
 def main(args=None):
     rclpy.init(args=args)

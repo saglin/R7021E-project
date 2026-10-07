@@ -31,5 +31,8 @@ def generate_launch_description():
                 ('/tf', '/a200_0000/tf'),
                 ('/tf_static', '/a200_0000/tf_static'),
             ],
+            parameters=[
+                {'use_sim_time': True},
+            ],
         ),
     ])
