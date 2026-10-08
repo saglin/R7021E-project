@@ -53,6 +53,7 @@ class PathPlannerNode(Node):
         self.declare_parameter('global_frame', 'map')
         self.declare_parameter('base_frame', 'base_link')
         self.declare_parameter('tf_timeout_sec', 0.5)
+        self.detected_objects_topic = '/detected_objects'
 
         map_topic: str = self.get_parameter('map_topic').get_parameter_value().string_value
         frontier_topic: str = self.get_parameter('frontier_topic').get_parameter_value().string_value
@@ -70,7 +71,7 @@ class PathPlannerNode(Node):
         # Subscribers
         self.map_sub = self.create_subscription(OccupancyGrid, map_topic, self._on_map, default_qos)
         self.frontier_sub = self.create_subscription(OccupancyGrid, frontier_topic, self._on_frontier, default_qos)
-        self.detected_objects = self.create_subscription(DetectedObjects, detected_objects, self._coordinates_detected_object, default_qos)
+        self.detected_objects = self.create_subscription(Detection3DArray, self.detected_objects_topic, self._coordinates_detected_object, default_qos)
 
 
         # TF
@@ -169,7 +170,7 @@ class PathPlannerNode(Node):
             return
 
         x, y, yaw = pose
-        path = self.plan_path((x, y, yaw),msg,self._latest_frontier,self.detected_object_list)
+        path = self.plan_path((x, y, yaw),msg,self._latest_frontier)
 
         if path is None:
             return
@@ -212,7 +213,7 @@ class PathPlannerNode(Node):
                   start: Tuple[float, float, float],
                   map_msg: OccupancyGrid,
                   frontier_msg: Optional[OccupancyGrid],
-                  detected_object_list):
+                  ):
         """
         Use this function to plan the path
         """
@@ -221,6 +222,7 @@ class PathPlannerNode(Node):
         #     self.get_logger().info("Exploration complete")
         #     return      
 
+        # self.get_logger().info("Planning path...")
     
         width = map_msg.info.width
         height = map_msg.info.height
@@ -320,7 +322,7 @@ class PathPlannerNode(Node):
         
         for leaf_node in tree.leaf_nodes:
 
-            heuristic_value = self.calculate_heuristic(leaf_node, inflated_grid, min_x, min_y, resolution, frontier_grid_2d, frontier_min_x, frontier_min_y, frontier_resolution, detected_object_list)
+            heuristic_value = self.calculate_heuristic(leaf_node, inflated_grid, min_x, min_y, resolution, frontier_grid_2d, frontier_min_x, frontier_min_y, frontier_resolution)
             heuristic_values.append(heuristic_value)
 
 
@@ -331,7 +333,7 @@ class PathPlannerNode(Node):
         best_leaf_node = tree.leaf_nodes[index]
 
         # Calculate the heuristic value of the current path to be able to compare it to the new one 
-        current_heuristic_value = self.calculate_current_heuristic(self.current_leaf_node, inflated_grid, min_x, min_y, resolution, frontier_grid_2d, frontier_min_x, frontier_min_y, frontier_resolution, start[0], start[1], detected_object_list)
+        current_heuristic_value = self.calculate_current_heuristic(self.current_leaf_node, inflated_grid, min_x, min_y, resolution, frontier_grid_2d, frontier_min_x, frontier_min_y, frontier_resolution, start[0], start[1])
 
         node = self.current_leaf_node
         collision = False

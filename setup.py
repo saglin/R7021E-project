@@ -37,6 +37,8 @@ setup(
         'console_scripts': [
             'camera_node = project.object_detection:main',
             'tf_relay = project.tf_relay:main',
+            'path_planner_node = project.navigation_node:main',
+            'frontier_detector_node = project.frontier_detector_node:main',
         ],
     },
 )

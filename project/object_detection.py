@@ -91,11 +91,10 @@ class CameraNode(Node):
                 if box.id is not None:
                     track_id = int(box.id[0].cpu().numpy())
 
-                self.get_logger().info(
-                    f"Detection {i}: class={self.model.names[int(box.cls[0])]}, "
-                    f"track_id={track_id}"
-                )
-
+                # self.get_logger().info(
+                #     f"Detection {i}: class={self.model.names[int(box.cls[0])]}, "
+                #     f"track_id={track_id}"
+                # )
 
                 x1, y1, x2, y2 = box.xyxy[0].cpu().numpy().astype(int)
                 confidence = box.conf[0].cpu().numpy()
