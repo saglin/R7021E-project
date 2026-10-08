@@ -169,9 +169,7 @@ class PathPlannerNode(Node):
             return
 
         x, y, yaw = pose
-        path = self.plan_path((x, y, yaw),
-                              msg,
-                              self._latest_frontier)
+        path = self.plan_path((x, y, yaw),msg,self._latest_frontier,self.detected_object_list)
 
         if path is None:
             return
@@ -243,7 +241,7 @@ class PathPlannerNode(Node):
             for y_index in range(height):
                 grid_2d[x_index].append(grid_array[y_index * width + x_index])
 
-        inflated_grid = self.inflate_map(grid_2d, resolution)
+        inflated_grid = np.asarray(self.inflate_map(grid_2d, resolution))
 
         # 1. Initialize tree
         tree = Tree(start[0], start[1])
@@ -383,31 +381,27 @@ class PathPlannerNode(Node):
 
     # Checks if any grid squares between point_a and point_b are occupied
     
-def collision_check(self, point_a_x, point_a_y,
-                    point_b_x, point_b_y,
-                    occupancy_grid, min_x, min_y, resolution):
+    def collision_check(self, point_a_x, point_a_y, point_b_x, point_b_y, occupancy_grid, min_x, min_y, resolution):
 
-    # Convert world coordinates to grid indices
-    x0 = math.floor((point_a_x - min_x) / resolution)
-    y0 = math.floor((point_a_y - min_y) / resolution)
-    x1 = math.floor((point_b_x - min_x) / resolution)
-    y1 = math.floor((point_b_y - min_y) / resolution)
+        # Convert world coordinates to grid indices
+        x0 = math.floor((point_a_x - min_x) / resolution)
+        y0 = math.floor((point_a_y - min_y) / resolution)
+        x1 = math.floor((point_b_x - min_x) / resolution)
+        y1 = math.floor((point_b_y - min_y) / resolution)
 
-    # Get the cells along the line
-    xx, yy = line(x0, y0, x1, y1)
+        # Get the cells along the line
+        xx, yy = line(x0, y0, x1, y1)
 
-    # Check map boundaries
-    width = len(occupancy_grid)
-    height = len(occupancy_grid[0])
+        # Check map boundaries
+        width = len(occupancy_grid)
+        height = len(occupancy_grid[0])
 
-    if np.any((xx < 0) | (xx >= width) |
-              (yy < 0) | (yy >= height)):
-        return True
+        if np.any((xx < 0) | (xx >= width) |
+                (yy < 0) | (yy >= height)):
+            return True
 
-    # Check for occupied cells
-    return bool(np.any(
-        occupancy_grid[xx, yy] >= self.occupancy_threshold
-    ))
+        # Check for occupied cells
+        return bool(np.any(occupancy_grid[xx, yy] >= self.occupancy_threshold))
 
 
 #👉🏻
