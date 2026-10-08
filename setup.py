@@ -17,6 +17,10 @@ setup(
             os.path.join('share', package_name, 'launch'),
             glob('launch/*.launch.py'),
         ),
+        (
+            os.path.join('share', package_name, 'config'),
+            glob('config/*.yaml')
+        ),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
@@ -31,7 +35,8 @@ setup(
     },
     entry_points={
         'console_scripts': [
-            'camera_node = project.object_detection:main'
+            'camera_node = project.object_detection:main',
+            'tf_relay = project.tf_relay:main',
         ],
     },
 )

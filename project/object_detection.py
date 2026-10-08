@@ -29,7 +29,7 @@ class CameraNode(Node):
         camera_depth_topic = '/a200_0000/sensors/camera_0/depth/image'
         camera_depth_info_topic = '/a200_0000/sensors/camera_0/depth/camera_info'
         YOLO_MODEL_PATH = 'yolov8n-seg.pt'
-        self.target_frame = 'odom'     # Change to 'map' later
+        self.target_frame = 'map'     # Change to 'map' later
 
         detected_objects_topic = '/detected_objects'
 
@@ -59,6 +59,8 @@ class CameraNode(Node):
         self.depth_info = None
 
     def image_callback(self, msg):
+        # self.get_logger().info("Received camera image")
+
         frame = self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
 
         if self.depth_frame is None:
@@ -75,7 +77,9 @@ class CameraNode(Node):
 
         markers = MarkerArray() # For visualization in RViz
 
-        results = self.model.track(frame, persist=True)
+        results = self.model.track(frame, persist=True, verbose=False)
+
+        # self.get_logger().info(f"YOLO detected {len(results[0].boxes)} objects")
 
         for result in results:
             if result.masks is None:
@@ -83,6 +87,16 @@ class CameraNode(Node):
             boxes = result.boxes
             masks = result.masks.data
             for i, box in enumerate(boxes):
+                track_id = None
+                if box.id is not None:
+                    track_id = int(box.id[0].cpu().numpy())
+
+                self.get_logger().info(
+                    f"Detection {i}: class={self.model.names[int(box.cls[0])]}, "
+                    f"track_id={track_id}"
+                )
+
+
                 x1, y1, x2, y2 = box.xyxy[0].cpu().numpy().astype(int)
                 confidence = box.conf[0].cpu().numpy()
                 class_id = int(box.cls[0].cpu().numpy())
@@ -116,6 +130,7 @@ class CameraNode(Node):
                 detection = self.create_detection_msg(point_base, class_name, confidence, box, msg.header.stamp)
                 detections_msg.detections.append(detection)
 
+                # Draw bounding box and mask on the frame for visualization
                 frame = self.draw_bounding_box(frame, box, class_name, confidence, point_base, mask)
 
                 # Create a visualization marker for RViz
@@ -125,6 +140,7 @@ class CameraNode(Node):
 
         self.object_publisher.publish(detections_msg)
         self.marker_publisher.publish(markers)
+        # self.get_logger().info("Published object detections")
 
         # Display the frame with bounding boxes and masks
         cv2.imshow("RealSense", frame)
@@ -241,7 +257,7 @@ class CameraNode(Node):
 
     def convert_to_point_stamped(self, point_3d, stamp):
         point_stamped = PointStamped()
-        # point_stamped.header.stamp = stamp    # TODO: Use the actual timestamp from the image message for better synchronization
+        # point_stamped.header.stamp = stamp
         point_stamped.header.stamp = rclpy.time.Time().to_msg()
         point_stamped.header.frame_id = self.camera_info.header.frame_id
         point_stamped.point.x = point_3d[0]
