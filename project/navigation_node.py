@@ -2,6 +2,11 @@
 
 import math
 from typing import Optional, Tuple, List
+import numpy as np
+from skimage.draw import line
+import tf2_ros
+import random
+import copy
 
 import rclpy
 from rclpy.node import Node
@@ -16,9 +21,7 @@ from builtin_interfaces.msg import Time as TimeMsg
 from rclpy.time import Time
 from vision_msgs.msg import Detection3DArray
 
-import tf2_ros
-import random
-import copy
+
 
 
 def quat_to_yaw(q: Quaternion) -> float:
@@ -379,44 +382,33 @@ class PathPlannerNode(Node):
             return path_msg
 
     # Checks if any grid squares between point_a and point_b are occupied
-    def collision_check(self, point_a_x, point_a_y, point_b_x, point_b_y, occupancy_grid, min_x, min_y, resolution):
+    
+def collision_check(self, point_a_x, point_a_y,
+                    point_b_x, point_b_y,
+                    occupancy_grid, min_x, min_y, resolution):
 
-        a_x_index = math.floor((point_a_x - min_x) / resolution)
-        a_y_index = math.floor((point_a_y - min_y) / resolution)
+    # Convert world coordinates to grid indices
+    x0 = math.floor((point_a_x - min_x) / resolution)
+    y0 = math.floor((point_a_y - min_y) / resolution)
+    x1 = math.floor((point_b_x - min_x) / resolution)
+    y1 = math.floor((point_b_y - min_y) / resolution)
 
-        b_x_index = math.floor((point_b_x - min_x) / resolution)
-        b_y_index = math.floor((point_b_y - min_y) / resolution)
+    # Get the cells along the line
+    xx, yy = line(x0, y0, x1, y1)
 
-        indices_along_line = [[a_x_index, a_y_index]]
+    # Check map boundaries
+    width = len(occupancy_grid)
+    height = len(occupancy_grid[0])
 
-        angle = math.atan2(point_b_y - point_a_y, point_b_x - point_a_x)
-        change_x = math.cos(angle) * resolution / 2
-        change_y = math.sin(angle) * resolution / 2
+    if np.any((xx < 0) | (xx >= width) |
+              (yy < 0) | (yy >= height)):
+        return True
 
-        new_point_x = point_a_x
-        new_point_y = point_a_y
+    # Check for occupied cells
+    return bool(np.any(
+        occupancy_grid[xx, yy] >= self.occupancy_threshold
+    ))
 
-        while [b_x_index, b_y_index] not in indices_along_line:
-
-            # New point along the line
-            new_point_x = new_point_x + change_x
-            new_point_y = new_point_y + change_y
-
-            new_x_index = math.floor((new_point_x - min_x) / resolution)
-            new_y_index = math.floor((new_point_y - min_y) / resolution)
-
-            # Makes sure that the new index is within the map
-            if not (0 <= new_x_index < len(occupancy_grid) and 0 <= new_y_index < len(occupancy_grid[0])):
-                return True
-
-            if [new_x_index, new_y_index] not in indices_along_line:
-                indices_along_line.append([new_x_index, new_y_index])
-
-            # Makes sure that the current square is not occupied
-            if occupancy_grid[new_x_index][new_y_index] > self.occupancy_threshold:
-                return True
-
-        return False
 
 #👉🏻
     def calculate_heuristic(self, leaf_node, occupancy_grid, min_x, min_y, resolution, frontier_grid, frontier_min_x, frontier_min_y, frontier_resolution):
