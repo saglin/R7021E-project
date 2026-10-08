@@ -39,6 +39,7 @@ setup(
             'tf_relay = project.tf_relay:main',
             'path_planner_node = project.navigation_node:main',
             'frontier_detector_node = project.frontier_detector_node:main',
+            'path_follower = project.path_follower_node:main',
         ],
     },
 )

@@ -148,4 +148,20 @@ def generate_launch_description():
                 }
             ],
         ),
+
+        # ----------------------------------------------------------
+        # Path follower
+        # ----------------------------------------------------------
+        
+        Node(
+            package='project',
+            executable='path_follower',
+            name='path_follower',
+            output='screen',
+            parameters=[
+                {
+                    'use_sim_time': True,
+                }
+            ],
+        ),
     ])
