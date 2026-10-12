@@ -20,6 +20,7 @@ from nav_msgs.msg import Path, OccupancyGrid
 from builtin_interfaces.msg import Time as TimeMsg
 from rclpy.time import Time
 from vision_msgs.msg import Detection3DArray
+from scipy.spatial import KDTree
 
 
 
@@ -257,14 +258,20 @@ class PathPlannerNode(Node):
             random_y = random.random() * (max_y - min_y) + min_y
 
             # 3. Find the closest node/vertex to rho within N, denoted N_closest
-            min_distance = math.inf
-            N_closest = tree.root
-            for node in tree.nodes:
-                distance = math.sqrt((random_x-node.x)**2 + (random_y-node.y)**2)
+            #MODIFIED CODE
+            kdtree = KDTree(tree.coords)
+            _distance, closest_index = kdtree.query([random_x, random_y])
+            N_closest = tree.nodes[closest_index]
 
-                if distance < min_distance:
-                    N_closest = node
-                    min_distance = distance
+            # OLD
+            # min_distance = math.inf
+            # N_closest = tree.root
+            # for node in tree.nodes:
+            #     distance = math.sqrt((random_x-node.x)**2 + (random_y-node.y)**2)
+
+            #     if distance < min_distance:
+            #         N_closest = node
+            #         min_distance = distance
 
             # 4. Take a "step" from N_closest to rho
             angle_to_point = math.atan2(random_y - N_closest.y, random_x - N_closest.x) # Calculates the angle between the x-axis and the line from N_closest and rho
@@ -542,10 +549,12 @@ class Tree():
         self.root = Tree_Nodes(robot_x, robot_y)
         self.nodes = [self.root]
         self.leaf_nodes = [self.root]
+        self.coords = [(robot_x, robot_y)] #new code
 
     def add_node(self, x, y, parent, distance_to_parent=0.0, children=None):
         new_node = Tree_Nodes(x, y, parent, distance_to_parent, children)
         self.nodes.append(new_node)
+        self.coords.append((x, y)) #new code
         self.leaf_nodes.append(new_node)
         if parent in self.leaf_nodes:
             self.leaf_nodes.remove(parent)
