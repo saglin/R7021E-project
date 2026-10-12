@@ -130,7 +130,7 @@ class CameraNode(Node):
                 detections_msg.detections.append(detection)
 
                 # Draw bounding box and mask on the frame for visualization
-                frame = self.draw_bounding_box(frame, box, class_name, confidence, point_base, mask)
+                # frame = self.draw_bounding_box(frame, box, class_name, confidence, point_base, mask)
 
                 # Create a visualization marker for RViz
                 marker, text_marker = self.create_marker(point_base, class_name, box, msg.header.stamp, markers)
@@ -142,8 +142,8 @@ class CameraNode(Node):
         # self.get_logger().info("Published object detections")
 
         # Display the frame with bounding boxes and masks
-        cv2.imshow("RealSense", frame)
-        cv2.waitKey(1)
+        # cv2.imshow("RealSense", frame)
+        # cv2.waitKey(1)
 
     def depth_callback(self, msg):
         depth_frame = self.bridge.imgmsg_to_cv2(msg, desired_encoding='passthrough')

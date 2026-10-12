@@ -90,7 +90,8 @@ class PathPlannerNode(Node):
         self.inflation_radius = 0.2
         self.distance_gain = 1.0
         self.ig_coeff = 5.0
-        self.minimum_travel_distance = 0.1
+        self.minimum_travel_distance = 0.3
+        self.heuristic_increase = 100.0
 #👉🏻
         self.detected_object_gain = None
         self.detected_object_list = []
@@ -100,7 +101,7 @@ class PathPlannerNode(Node):
 
 
         self.minimum_step_length = 5    # in cm
-        self.maximum_step_length = 25   # in cm
+        self.maximum_step_length = 30   # in cm
 
         self.current_tree = None
         self.current_leaf_node = None
@@ -352,7 +353,7 @@ class PathPlannerNode(Node):
         # If the heuristic value of the new path is better than the heuristic value of the old path
         # we send the new path to the controller. If the heuristic value is worse we don't save the
         # new path and continue travelling along the current path.
-        if heuristic_value + abs(heuristic_value) * 2 < current_heuristic_value or distance < self.minimum_travel_distance or collision:
+        if heuristic_value + abs(heuristic_value) * self.heuristic_increase < current_heuristic_value or distance < self.minimum_travel_distance or collision:
             path_msg = Path()
             path_msg.header.stamp = self.get_clock().now().to_msg()
             path_msg.header.frame_id = "map"
