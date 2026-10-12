@@ -84,9 +84,9 @@ class PathPlannerNode(Node):
 
         self.get_logger().info('PathPlannerNode initialized.')
 
-        self.tree_iterations = 1000
+        self.tree_iterations = 2000
         self.occupancy_threshold = 80
-        self.lidar_range = 6 # 3.5
+        self.lidar_range = 4 # 3.5
         self.inflation_radius = 0.7
         self.distance_gain = 1.0
         self.ig_coeff = 5.0

@@ -129,6 +129,7 @@ def generate_launch_description():
             parameters=[
                 {
                     'use_sim_time': True,
+                    'visited_radius': 2.0,
                 }
             ],
         ),
@@ -157,6 +158,21 @@ def generate_launch_description():
             package='project',
             executable='path_follower',
             name='path_follower',
+            output='screen',
+            parameters=[
+                {
+                    'use_sim_time': True,
+                }
+            ],
+        ),
+
+        # ----------------------------------------------------------
+        # Scan fixer
+        # ----------------------------------------------------------
+        Node(
+            package='project',
+            executable='scan_fixer',
+            name='scan_fixer',
             output='screen',
             parameters=[
                 {
