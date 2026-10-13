@@ -42,6 +42,11 @@ def generate_launch_description():
             'frame_id': 'base_link',
             'odom_topic': '/a200_0000/platform/odom',
 
+            # Keep publishing/updating the occupancy grid
+            # even when the robot has not moved
+            'map_always_update': 'true',
+            'map_empty_ray_tracing': 'false',
+
             # RGB-D camera
             'rgb_topic': '/a200_0000/sensors/camera_0/color/image',
             'depth_topic': '/a200_0000/sensors/camera_0/depth/image',
@@ -66,8 +71,8 @@ def generate_launch_description():
             'approx_sync': 'true',
 
             # Show RTAB-Map's visualization
-            # 'rtabmap_viz': 'true',
-            'rtabmap_viz': 'false',
+            'rtabmap_viz': 'true',
+            # 'rtabmap_viz': 'false',
 
             'args': (
                 '--delete_db_on_start '
