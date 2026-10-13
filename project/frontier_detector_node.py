@@ -13,7 +13,7 @@ class FrontierDetector(Node):
     def __init__(self):
         super().__init__('frontier_detector')
         self.declare_parameter('base_frame', 'base_link')
-        self.declare_parameter('visited_radius', 2.0)
+        self.declare_parameter('visited_radius', 3.5)
         self.base_frame = self.get_parameter(
             'base_frame').get_parameter_value().string_value
         self.visited_radius = self.get_parameter(

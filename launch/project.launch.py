@@ -129,7 +129,7 @@ def generate_launch_description():
             parameters=[
                 {
                     'use_sim_time': True,
-                    'visited_radius': 2.0,
+                    'visited_radius': 3.5,
                 }
             ],
         ),

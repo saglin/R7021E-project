@@ -85,7 +85,7 @@ class PathPlannerNode(Node):
 
         self.get_logger().info('PathPlannerNode initialized.')
 
-        self.tree_iterations = 2000
+        self.tree_iterations = 1600
         self.occupancy_threshold = 80
         self.lidar_range = 4 # 3.5
         self.inflation_radius = 0.7
@@ -101,7 +101,7 @@ class PathPlannerNode(Node):
 
 
         self.minimum_step_length = 5    # in cm
-        self.maximum_step_length = 25   # in cm
+        self.maximum_step_length = 50   # in cm
 
         self.current_tree = None
         self.current_leaf_node = None
@@ -355,11 +355,14 @@ class PathPlannerNode(Node):
 
             node = node.parent
 
+        # calculate distance to the current leaf node from the robot's current position
+        distance_to_leaf = math.sqrt((self.current_leaf_node.x - start[0])**2 + (self.current_leaf_node.y - start[1])**2)
+        
 
         # If the heuristic value of the new path is better than the heuristic value of the old path
         # we send the new path to the controller. If the heuristic value is worse we don't save the
         # new path and continue travelling along the current path.
-        if heuristic_value + abs(heuristic_value) * 5 < current_heuristic_value or distance < self.minimum_travel_distance or collision:
+        if heuristic_value + abs(heuristic_value) * 5 < current_heuristic_value or distance_to_leaf < self.minimum_travel_distance or collision:
             path_msg = Path()
             path_msg.header.stamp = self.get_clock().now().to_msg()
             path_msg.header.frame_id = "map"
