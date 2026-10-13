@@ -19,7 +19,7 @@ class PathFollower(Node):
         # Parameters
         self.declare_parameter('max_v', 1.0)  # m/s
         self.declare_parameter('kp_vel', 1.0)
-        self.declare_parameter('max_w', 2.0)  # rad/s
+        self.declare_parameter('max_w', math.pi/2.0)  # rad/s
         self.declare_parameter('kp_yaw', 2.0)
         self.declare_parameter('look_ahead', 1.0)  # m
 

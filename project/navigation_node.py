@@ -20,6 +20,8 @@ from nav_msgs.msg import Path, OccupancyGrid
 from builtin_interfaces.msg import Time as TimeMsg
 from rclpy.time import Time
 from vision_msgs.msg import Detection3DArray
+from scipy.spatial import KDTree
+from scipy.ndimage import binary_dilation
 
 
 
@@ -84,10 +86,10 @@ class PathPlannerNode(Node):
 
         self.get_logger().info('PathPlannerNode initialized.')
 
-        self.tree_iterations = 500
+        self.tree_iterations = 1000
         self.occupancy_threshold = 80
-        self.lidar_range = 0.5 # 3.5
-        self.inflation_radius = 0.2
+        self.lidar_range = 6 # 3.5
+        self.inflation_radius = 0.7
         self.distance_gain = 1.0
         self.ig_coeff = 5.0
         self.minimum_travel_distance = 0.3
@@ -194,17 +196,18 @@ class PathPlannerNode(Node):
                 dected_id = detection.id
                 
 
-                index = 0
-                for x_in_list,y_in_list,l_in_list, id_in_list in self.detected_object_list:
-                    d = math.sqrt((x - x_in_list)**2 + (y - y_in_list)**2)
-                    if d < 10: 
-                        if dected_id != id_in_list:
-                            self.detected_object_list.append((x, y, detected_label, dected_id))
-                        else:
-                            self.detected_object_list[index] = (x, y, detected_label, dected_id)
-                    else:
-                        self.detected_object_list.append((x, y, detected_label, dected_id))
-                    index +=1
+                index = None
+                for idx, (x_in_list,y_in_list,l_in_list, id_in_list) in enumerate(self.detected_object_list):
+                    if id_in_list == dected_id:
+                        index = idx
+                        break
+
+                if index is not None:
+                    # Update position of existing object
+                    self.detected_object_list[index] = (x, y, detected_label, dected_id)
+                else:
+                    # Append new object
+                    self.detected_object_list.append((x, y, detected_label, dected_id))
 
     
 
@@ -238,13 +241,16 @@ class PathPlannerNode(Node):
 
 
         # Make the occupancy map 2D
-        grid_2d = []
-        for x_index in range(width):
-            grid_2d.append([])
-            for y_index in range(height):
-                grid_2d[x_index].append(grid_array[y_index * width + x_index])
+        grid_2d = np.array(grid_array, dtype=np.int8).reshape((height, width))
+        inflated_grid = self.inflate_map(grid_2d, resolution)
 
-        inflated_grid = np.asarray(self.inflate_map(grid_2d, resolution))
+
+        # grid_2d = []
+        # for x_index in range(width):
+        #     grid_2d.append([])
+        #     for y_index in range(height):
+        #         grid_2d[x_index].append(grid_array[y_index * width + x_index])
+
 
         # 1. Initialize tree
         tree = Tree(start[0], start[1])
@@ -258,14 +264,20 @@ class PathPlannerNode(Node):
             random_y = random.random() * (max_y - min_y) + min_y
 
             # 3. Find the closest node/vertex to rho within N, denoted N_closest
-            min_distance = math.inf
-            N_closest = tree.root
-            for node in tree.nodes:
-                distance = math.sqrt((random_x-node.x)**2 + (random_y-node.y)**2)
+            #MODIFIED CODE
+            kdtree = KDTree(tree.coords)
+            _distance, closest_index = kdtree.query([random_x, random_y])
+            N_closest = tree.nodes[closest_index]
 
-                if distance < min_distance:
-                    N_closest = node
-                    min_distance = distance
+            # OLD
+            # min_distance = math.inf
+            # N_closest = tree.root
+            # for node in tree.nodes:
+            #     distance = math.sqrt((random_x-node.x)**2 + (random_y-node.y)**2)
+
+            #     if distance < min_distance:
+            #         N_closest = node
+            #         min_distance = distance
 
             # 4. Take a "step" from N_closest to rho
             angle_to_point = math.atan2(random_y - N_closest.y, random_x - N_closest.x) # Calculates the angle between the x-axis and the line from N_closest and rho
@@ -284,8 +296,7 @@ class PathPlannerNode(Node):
                 continue
 
             # Checks the occupancy status of rho_c
-            if inflated_grid[rho_x_index][rho_y_index] < self.occupancy_threshold:
-
+            if inflated_grid[rho_y_index, rho_x_index] < self.occupancy_threshold:
                 # Checks occapancy of every square between N_closest and rho_c
                 if not self.collision_check(N_closest.x, N_closest.y, rho_c_x, rho_c_y, inflated_grid, min_x, min_y, resolution):
                     distance = math.sqrt((rho_c_x - N_closest.x)**2 + (rho_c_y - N_closest.y)**2)
@@ -309,21 +320,24 @@ class PathPlannerNode(Node):
         frontier_max_y = min_y + height * resolution
 
         # Make the frontier grid into a 2D array
-        frontier_grid_2d = []
-        for x_index in range(frontier_width):
-            frontier_grid_2d.append([])
-            for y_index in range(frontier_height):
-                frontier_grid_2d[x_index].append(frontier_grid_array[y_index * frontier_width + x_index])
+        frontier_grid_2d = np.array(frontier_grid_array, dtype=np.int8).reshape((frontier_height, frontier_width))
 
+        # Extract grid indices of active frontier cells
+        fy_indices, fx_indices = np.where(frontier_grid_2d > 0)
 
+        # Convert grid indices to world (x, y) coordinates
+        frontier_x = fx_indices * frontier_resolution + frontier_resolution / 2.0 + frontier_min_x
+        frontier_y = fy_indices * frontier_resolution + frontier_resolution / 2.0 + frontier_min_y
 
-    
+        # Stack into an (N x 2) array of coordinates
+        frontier_coords = np.column_stack((frontier_x, frontier_y))
+
         # Calculate the heuristic values of all the leaf nodes in the tree
         heuristic_values = []
         
         for leaf_node in tree.leaf_nodes:
 
-            heuristic_value = self.calculate_heuristic(leaf_node, inflated_grid, min_x, min_y, resolution, frontier_grid_2d, frontier_min_x, frontier_min_y, frontier_resolution)
+            heuristic_value = self.calculate_heuristic(leaf_node, inflated_grid, min_x, min_y, resolution, frontier_coords)
             heuristic_values.append(heuristic_value)
 
 
@@ -334,7 +348,7 @@ class PathPlannerNode(Node):
         best_leaf_node = tree.leaf_nodes[index]
 
         # Calculate the heuristic value of the current path to be able to compare it to the new one 
-        current_heuristic_value = self.calculate_current_heuristic(self.current_leaf_node, inflated_grid, min_x, min_y, resolution, frontier_grid_2d, frontier_min_x, frontier_min_y, frontier_resolution, start[0], start[1])
+        current_heuristic_value = self.calculate_current_heuristic(self.current_leaf_node, inflated_grid, min_x, min_y, resolution, frontier_coords, start[0], start[1])
 
         node = self.current_leaf_node
         collision = False
@@ -396,28 +410,25 @@ class PathPlannerNode(Node):
         xx, yy = line(x0, y0, x1, y1)
 
         # Check map boundaries
-        width = len(occupancy_grid)
-        height = len(occupancy_grid[0])
+        height, width = occupancy_grid.shape
+        
 
-        if np.any((xx < 0) | (xx >= width) |
-                (yy < 0) | (yy >= height)):
+        if np.any((xx < 0) | (xx >= width) | (yy < 0) | (yy >= height)):
             return True
 
         # Check for occupied cells
-        return bool(np.any(occupancy_grid[xx, yy] >= self.occupancy_threshold))
+        return bool(np.any(occupancy_grid[yy, xx] >= self.occupancy_threshold))
 
 
 #👉🏻
-    def calculate_heuristic(self, leaf_node, occupancy_grid, min_x, min_y, resolution, frontier_grid, frontier_min_x, frontier_min_y, frontier_resolution):
-        
-        information_gain = self.calculate_information_gain(leaf_node, occupancy_grid, min_x, min_y, resolution, frontier_grid, frontier_min_x, frontier_min_y, frontier_resolution)
+    def calculate_heuristic(self, leaf_node, occupancy_grid, min_x, min_y, resolution, frontier_coords):        
+        information_gain = self.calculate_information_gain(leaf_node, occupancy_grid, min_x, min_y, resolution, frontier_coords)
         heuristic_value = self.distance_gain * leaf_node.distance_to_root - self.ig_coeff * information_gain
         return heuristic_value
 #👉🏻
-    def calculate_current_heuristic(self, leaf_node, occupancy_grid, min_x, min_y, resolution, frontier_grid, frontier_min_x, frontier_min_y, frontier_resolution, robot_x, robot_y):
+    def calculate_current_heuristic(self, leaf_node, occupancy_grid, min_x, min_y, resolution, frontier_coords, robot_x, robot_y):        
+        information_gain = self.calculate_information_gain(leaf_node, occupancy_grid, min_x, min_y, resolution, frontier_coords)
         
-        information_gain = self.calculate_information_gain(leaf_node, occupancy_grid, min_x, min_y, resolution, frontier_grid, frontier_min_x, frontier_min_y, frontier_resolution)
-
         node = leaf_node
         distance = 0
         while node is not None:
@@ -436,28 +447,35 @@ class PathPlannerNode(Node):
         return heuristic_value
 
 #👉🏻
-    def calculate_information_gain(self, leaf_node, occupancy_grid, min_x, min_y, resolution, frontier_grid, frontier_min_x, frontier_min_y, frontier_resolution):
-
+    def calculate_information_gain(self, leaf_node, occupancy_grid, min_x, min_y, resolution, frontier_coords):
         information_gain = 0
 
-        for index_x in range(len(frontier_grid)):
-            for index_y in range(len(frontier_grid[index_x])):
-                if frontier_grid[index_x][index_y] > 0: # Checks if the square is a frontier
+        if len(frontier_coords) > 0:
+            distances = np.hypot(frontier_coords[:, 0] - leaf_node.x, frontier_coords[:, 1] - leaf_node.y)
+            nearby_frontiers = frontier_coords[distances < self.lidar_range]
 
-                    x = index_x * frontier_resolution + frontier_resolution / 2 + frontier_min_x
-                    y = index_y * frontier_resolution + frontier_resolution / 2 + frontier_min_y
+            for fx, fy in nearby_frontiers:
+                if not self.collision_check(leaf_node.x, leaf_node.y, fx, fy, occupancy_grid, min_x, min_y, resolution):
+                    information_gain += 1
 
-                    # Calculates the distance from the frontier to the leaf node 
-                    distance = math.sqrt((x - leaf_node.x)**2 + (y - leaf_node.y)**2)
+        # for index_x in range(len(frontier_grid)):
+        #     for index_y in range(len(frontier_grid[index_x])):
+        #         if frontier_grid[index_x][index_y] > 0: # Checks if the square is a frontier
 
-                    # If the distance is within the lidar range it might be discovered if the 
-                    # robot moves to the leaf. 
-                    if distance < self.lidar_range:
-                        if not self.collision_check(leaf_node.x, leaf_node.y, x, y, occupancy_grid, min_x, min_y, resolution):
-                            information_gain += 1
+        #             x = index_x * frontier_resolution + frontier_resolution / 2 + frontier_min_x
+        #             y = index_y * frontier_resolution + frontier_resolution / 2 + frontier_min_y
 
-        for x,y,detected_objected,id in self.detected_object_list: 
-            object_value = self.object_value_list[detected_objected]
+        #             # Calculates the distance from the frontier to the leaf node 
+        #             distance = math.sqrt((x - leaf_node.x)**2 + (y - leaf_node.y)**2)
+
+        #             # If the distance is within the lidar range it might be discovered if the 
+        #             # robot moves to the leaf. 
+        #             if distance < self.lidar_range:
+        #                 if not self.collision_check(leaf_node.x, leaf_node.y, x, y, occupancy_grid, min_x, min_y, resolution):
+        #                     information_gain += 1
+
+        for x,y,detected_object,_id in self.detected_object_list: 
+            object_value = self.object_value_list.get(detected_object,0)
             distance = math.sqrt((x - leaf_node.x)**2 + (y - leaf_node.y)**2)
             if distance < self.lidar_range:
                 information_gain += object_value
@@ -512,28 +530,50 @@ class PathPlannerNode(Node):
     
     # Inflates the occupied squares of the occupancy grid.
     def inflate_map(self, grid, resolution):
-        inflated_grid = copy.deepcopy(grid)
-        inflation_cells = math.ceil(self.inflation_radius / resolution)
-        width = len(grid)
-        height = len(grid[0])
+        grid_array = np.array(grid, dtype=np.int8)
+        
+        # Calculate kernel radius in grid cells
+        radius_cells = math.ceil(self.inflation_radius / resolution)
+        
+        # Create a circular kernel (structuring element)
+        y_idx, x_idx = np.ogrid[-radius_cells:radius_cells + 1, -radius_cells:radius_cells + 1]
+        kernel = (x_idx**2 + y_idx**2 <= radius_cells**2)
+        
+        # Mask where original grid is occupied
+        obstacle_mask = (grid_array >= self.occupancy_threshold)
+        
+        # Fast C-based dilation across the grid
+        dilated_mask = binary_dilation(obstacle_mask, structure=kernel)
+        
+        # Return dilated map where dilated cells are set to 100
+        inflated_grid = np.copy(grid_array)
+        inflated_grid[dilated_mask] = 100
 
-        # Iterates through the old occupancy grid and changes the occupancy of the squares around 
-        # all the occupied squares.
-        for x in range(width):
-            for y in range(height):
-                if grid[x][y] >= self.occupancy_threshold:  # Checks if the square is occupied
-                    # Iterates through the cells around the occupied square
-                    for dx in range(-inflation_cells, inflation_cells + 1):
-                        for dy in range(-inflation_cells, inflation_cells + 1):
-                            nx = x + dx
-                            ny = y + dy
 
-                            # Checks that the surrounding square is within the map
-                            if 0 <= nx < width and 0 <= ny < height:
-                                # Only changes nearby squares if they are within a circular radius 
-                                # of the original square
-                                if dx**2 + dy**2 <= inflation_cells**2:
-                                    inflated_grid[nx][ny] = 100
+
+        #OLD code 
+        # inflated_grid = copy.deepcopy(grid)
+        # inflation_cells = math.ceil(self.inflation_radius / resolution)
+        # width = len(grid)
+        # height = len(grid[0])
+
+        # # Iterates through the old occupancy grid and changes the occupancy of the squares around 
+        # # all the occupied squares.
+        # for x in range(width):
+        #     for y in range(height):
+        #         if grid[x][y] >= self.occupancy_threshold:  # Checks if the square is occupied
+        #             # Iterates through the cells around the occupied square
+        #             for dx in range(-inflation_cells, inflation_cells + 1):
+        #                 for dy in range(-inflation_cells, inflation_cells + 1):
+        #                     nx = x + dx
+        #                     ny = y + dy
+
+        #                     # Checks that the surrounding square is within the map
+        #                     if 0 <= nx < width and 0 <= ny < height:
+        #                         # Only changes nearby squares if they are within a circular radius 
+        #                         # of the original square
+        #                         if dx**2 + dy**2 <= inflation_cells**2:
+        #                             inflated_grid[nx][ny] = 100
 
         return inflated_grid
 
@@ -543,10 +583,12 @@ class Tree():
         self.root = Tree_Nodes(robot_x, robot_y)
         self.nodes = [self.root]
         self.leaf_nodes = [self.root]
+        self.coords = [(robot_x, robot_y)] #new code
 
     def add_node(self, x, y, parent, distance_to_parent=0.0, children=None):
         new_node = Tree_Nodes(x, y, parent, distance_to_parent, children)
         self.nodes.append(new_node)
+        self.coords.append((x, y)) #new code
         self.leaf_nodes.append(new_node)
         if parent in self.leaf_nodes:
             self.leaf_nodes.remove(parent)
@@ -568,7 +610,7 @@ class Tree_Nodes():
 
         if children != None:
             for child in children:
-                self.append(child)
+                self.child.append(child)
 
         
 def main() -> None:
