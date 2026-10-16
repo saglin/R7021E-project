@@ -23,6 +23,8 @@ from vision_msgs.msg import Detection3DArray
 from scipy.spatial import KDTree
 from scipy.ndimage import binary_dilation
 
+from geometry_msgs.msg import PointStamped
+from tf2_geometry_msgs import do_transform_point
 
 
 
@@ -107,6 +109,8 @@ class PathPlannerNode(Node):
 
         self.current_tree = None
         self.current_leaf_node = None
+        self.current_path = None 
+        self.max_path_deviation = 0.5  # meters
 
         # self.frontier_percentage_threshold = 0.01  # 1%
         # self.exploration_complete = False
@@ -171,14 +175,26 @@ class PathPlannerNode(Node):
         pose = self.get_robot_pose()
         if pose is None:
             return
-
+        
         x, y, yaw = pose
-        path = self.plan_path((x, y, yaw),msg,self._latest_frontier)
 
-        if path is None:
-            return
+        if self.current_path is None:
+            self.plan_path((x, y, yaw),msg,self._latest_frontier)
+
+        else:
+            if self.check_if_goal_is_reached(pose):
+                self.current_path = None
+
+            elif self.check_if_collision_on_path(msg, pose):
+                self.current_path = None
+                self.plan_path(pose, msg, self._latest_frontier)
+        
+    
+        
+        
 
     def _coordinates_detected_object(self, msg):
+        self.get_logger().info(f"Detection frame: {msg.header.frame_id}")
         for detection in msg.detections:
             # Label
             if len(detection.results) == 0:
@@ -188,27 +204,44 @@ class PathPlannerNode(Node):
             if detected_confidance > 0.8:
                 #label
                 detected_label = detection.results[0].hypothesis.class_id
-                # Position in base_link
-                x = detection.bbox.center.position.x
-                y = detection.bbox.center.position.y
+                
+                object_point = PointStamped()
+                object_point.header = msg.header
+                object_point.point = detection.bbox.center.position
+
+                try:
+                    transform = self.tf_buffer.lookup_transform(
+                        self.global_frame,
+                        object_point.header.frame_id,
+                        Time(),
+                        timeout=self.tf_timeout
+                    )
+
+                    transformed_point = do_transform_point(object_point, transform)
+
+                except Exception as e:
+                    self.get_logger().warn(f"Object transformation failed: {e}")
+                    continue
+
+                x = transformed_point.point.x
+                y = transformed_point.point.y
 
                 # id of the object, ALWAYS uniqe
                 dected_id = detection.id
-                
 
-                index = None
-                for idx, (x_in_list,y_in_list,l_in_list, id_in_list) in enumerate(self.detected_object_list):
-                    if id_in_list == dected_id:
-                        index = idx
+                
+                existing_index = None
+                for idx, (_, _, _, id_in_list) in enumerate(self.detected_object_list):
+                    if dected_id == id_in_list:
+                        existing_index = idx
                         break
 
-                if index is not None:
-                    # Update position of existing object
-                    self.detected_object_list[index] = (x, y, detected_label, dected_id)
+                if existing_index is not None:
+                    self.detected_object_list[existing_index] = (x, y, detected_label, dected_id)
                 else:
-                    # Append new object
                     self.detected_object_list.append((x, y, detected_label, dected_id))
 
+           
     
 
     # ----------------- Planning -----------------
@@ -241,22 +274,24 @@ class PathPlannerNode(Node):
 
 
         # Make the occupancy map 2D
-        grid_2d = np.array(grid_array, dtype=np.int8).reshape((height, width))
-        inflated_grid = self.inflate_map(grid_2d, resolution)
+        grid_2d = []
+        for x_index in range(width):
+            grid_2d.append([])
+            for y_index in range(height):
+                grid_2d[x_index].append(grid_array[y_index * width + x_index])
 
+        inflated_grid = np.asarray(self.inflate_map(grid_2d, resolution))
 
-        # grid_2d = []
-        # for x_index in range(width):
-        #     grid_2d.append([])
-        #     for y_index in range(height):
-        #         grid_2d[x_index].append(grid_array[y_index * width + x_index])
+        
 
-
-        # 1. Initialize tree
+        # 1. Initialize a new RRT tree
         tree = Tree(start[0], start[1])
-        if self.current_tree is None:
-            self.current_tree = tree
-            self.current_leaf_node = tree.root
+
+        # Initialize KDTree for nearest-neighbor search
+        kdtree = KDTree(tree.coords)
+        kdtree_size = len(tree.coords)
+        rebuild_interval = 25
+        
         
         for i in range(self.tree_iterations):
             # 2. Random point in M
@@ -264,9 +299,24 @@ class PathPlannerNode(Node):
             random_y = random.random() * (max_y - min_y) + min_y
 
             # 3. Find the closest node/vertex to rho within N, denoted N_closest
+            if len(tree.coords) - kdtree_size >= rebuild_interval:
+                kdtree = KDTree(tree.coords)
+                kdtree_size = len(tree.coords)
+
             #MODIFIED CODE
-            kdtree = KDTree(tree.coords)
             _distance, closest_index = kdtree.query([random_x, random_y])
+            new_coords = tree.coords[kdtree_size:]
+
+            if len(new_coords) > 0:
+                new_coords_array = np.asarray(new_coords)
+                distances = np.sum((new_coords_array - [random_x, random_y])**2, axis=1)
+                new_closest_index = np.argmin(distances)
+                # Squared distance to that node
+                new_closest_distance = distances[new_closest_index]
+                # Compare closest new node against KDTree result
+                if new_closest_distance < _distance**2:
+                    closest_index = kdtree_size + new_closest_index
+
             N_closest = tree.nodes[closest_index]
 
             # OLD
@@ -320,18 +370,13 @@ class PathPlannerNode(Node):
         frontier_max_y = min_y + height * resolution
 
         # Make the frontier grid into a 2D array
-        frontier_grid_2d = np.array(frontier_grid_array, dtype=np.int8).reshape((frontier_height, frontier_width))
+        frontier_grid_2d = []
+        for x_index in range(frontier_width):
+            frontier_grid_2d.append([])
+            for y_index in range(frontier_height):
+                frontier_grid_2d[x_index].append(frontier_grid_array[y_index * frontier_width + x_index])
 
-        # Extract grid indices of active frontier cells
-        fy_indices, fx_indices = np.where(frontier_grid_2d > 0)
-
-        # Convert grid indices to world (x, y) coordinates
-        frontier_x = fx_indices * frontier_resolution + frontier_resolution / 2.0 + frontier_min_x
-        frontier_y = fy_indices * frontier_resolution + frontier_resolution / 2.0 + frontier_min_y
-
-        # Stack into an (N x 2) array of coordinates
-        frontier_coords = np.column_stack((frontier_x, frontier_y))
-
+    
         # Calculate the heuristic values of all the leaf nodes in the tree
         heuristic_values = []
         
@@ -347,54 +392,141 @@ class PathPlannerNode(Node):
         index = heuristic_values.index(heuristic_value)
         best_leaf_node = tree.leaf_nodes[index]
 
-        # Calculate the heuristic value of the current path to be able to compare it to the new one 
-        current_heuristic_value = self.calculate_current_heuristic(self.current_leaf_node, inflated_grid, min_x, min_y, resolution, frontier_coords, start[0], start[1])
+        path_msg = Path()
+        path_msg.header.stamp = self.get_clock().now().to_msg()
+        path_msg.header.frame_id = "map"
 
-        node = self.current_leaf_node
-        collision = False
-        # Checks that every node and path between the nodes are still unoccupied
-        while node is not None and node.parent is not None:
-            collision = self.collision_check(node.x, node.y, node.parent.x, node.parent.y, inflated_grid, min_x, min_y, resolution)
+        # Extract the path from the leaf node to the root (the robot's position)
+        node = best_leaf_node
+        while node is not None:
+            pose = PoseStamped()
+            pose.header.stamp = path_msg.header.stamp
+            pose.header.frame_id = "map"
 
-            # Stops checking if the current path has a collision (if a previously unknown square 
-            # on the path has become occupied)
-            if collision:
-                break
+            pose.pose.position.x = node.x
+            pose.pose.position.y = node.y
 
+            path_msg.poses.insert(0, pose)
             node = node.parent
 
+        # Publish the path
+        self.path_pub.publish(path_msg)
+        self.current_path = path_msg
 
-        # If the heuristic value of the new path is better than the heuristic value of the old path
-        # we send the new path to the controller. If the heuristic value is worse we don't save the
-        # new path and continue travelling along the current path.
-        if heuristic_value + abs(heuristic_value) * self.heuristic_increase < current_heuristic_value or distance < self.minimum_travel_distance or collision:
-            path_msg = Path()
-            path_msg.header.stamp = self.get_clock().now().to_msg()
-            path_msg.header.frame_id = "map"
+        # Save the new tree and the goal node
+        self.current_tree = tree
+        self.current_leaf_node = best_leaf_node
 
-            # Extract the path from the leaf node to the root (the robot's position)
-            node = best_leaf_node
-            while node is not None:
-                pose = PoseStamped()
-                pose.header.stamp = path_msg.header.stamp
-                pose.header.frame_id = "map"
+        self.publish_tree(self.current_tree)
+        
 
-                pose.pose.position.x = node.x
-                pose.pose.position.y = node.y
+        return path_msg
 
-                path_msg.poses.insert(0, pose)
-                node = node.parent
+# 👇🏼 new since 15/10:
+    def check_if_goal_is_reached(self, robot_pose):
+        #1. goal point, end of the path
+        goal_point = self.current_path.poses[-1].pose.position
+        g_x, g_y, = goal_point.x, goal_point.y
 
-            # Publish the path
-            self.path_pub.publish(path_msg)
+        #2. the robots current pose
+        c_x, c_y, c_yaw = robot_pose
 
-            # Save the new tree and the goal node
-            self.current_tree = tree
-            self.current_leaf_node = best_leaf_node
+        #3. calculate the euclidian distance between current position and the goal position (end of the path)
+        distance = math.sqrt((g_x - c_x)**2 + (g_y - c_y)**2)
 
-            self.publish_tree(self.current_tree)
+        #4. check if that is with the threshold
+        if distance < self.minimum_travel_distance:
+            #5. if the goal is reached
+            return True
+        else:
+            return False
 
-            return path_msg
+
+    def check_if_collision_on_path(self, map_msg, robot_pose):
+        # 1. Get current path
+        path_points = self.current_path.poses
+        
+        if len(path_points) < 2:
+            return True
+
+        robot_x, robot_y, _ = robot_pose
+        closest_segment_index = 0
+        minimum_distance = float("inf")
+
+        for i in range(len(path_points) - 1):
+            point_a = path_points[i].pose.position
+            point_b = path_points[i + 1].pose.position
+            
+            dx = point_b.x - point_a.x
+            dy = point_b.y - point_a.y
+            segment_length_squared = dx**2 + dy**2
+
+            if segment_length_squared == 0:
+                continue
+            t = ((robot_x - point_a.x) * dx +
+                (robot_y - point_a.y) * dy) / segment_length_squared
+            t = max(0.0, min(1.0, t))
+
+
+            # Calculate the projected point on the segment
+            closest_x = point_a.x + t * dx
+            closest_y = point_a.y + t * dy
+
+            # Calculate distance from robot to projected point
+            distance = math.sqrt(
+                (robot_x - closest_x)**2 +
+                (robot_y - closest_y)**2
+            )
+
+            if distance < minimum_distance:
+                minimum_distance = distance
+                closest_segment_index = i
+
+        # Check whether robot has deviated too far from the path
+        if minimum_distance > self.max_path_deviation:
+            return True
+
+        # 2. Get occupancy grid
+        width = map_msg.info.width
+        height = map_msg.info.height
+        resolution = map_msg.info.resolution
+
+        min_x = map_msg.info.origin.position.x
+        min_y = map_msg.info.origin.position.y
+
+
+
+        grid_2d = np.array(map_msg.data).reshape(height, width).T
+
+        # 3. Inflate occupancy grid
+        inflated_grid = np.asarray(
+            self.inflate_map(grid_2d, resolution)
+        )
+
+        # 4. Iterate through consecutive points
+        for i in range(closest_segment_index, len(path_points) - 1):
+            point_a = path_points[i].pose.position
+            point_b = path_points[i + 1].pose.position
+
+            if i == closest_segment_index:
+                start_x = robot_x
+                start_y = robot_y
+            else:
+                start_x = point_a.x
+                start_y = point_a.y
+
+            # 5. Check collision between two points
+            collision = self.collision_check(start_x, start_y, point_b.x, point_b.y, inflated_grid, min_x, min_y, resolution)
+
+            # 6. Return True if blocked
+            if collision:
+                return True
+
+        # 7. No collision found
+        return False
+# 👆🏻 new since 15/10:
+        
+        
 
     # Checks if any grid squares between point_a and point_b are occupied
     
