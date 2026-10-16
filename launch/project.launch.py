@@ -42,11 +42,6 @@ def generate_launch_description():
             'frame_id': 'base_link',
             'odom_topic': '/a200_0000/platform/odom',
 
-            # Keep publishing/updating the occupancy grid
-            # even when the robot has not moved
-            'map_always_update': 'true',
-            'map_empty_ray_tracing': 'false',
-
             # RGB-D camera
             'rgb_topic': '/a200_0000/sensors/camera_0/color/image',
             'depth_topic': '/a200_0000/sensors/camera_0/depth/image',
@@ -54,35 +49,58 @@ def generate_launch_description():
 
             'map_topic': '/map',
 
-            'subscribe_rgbd': 'false',
+            # 'localization': 'false',
+            # 'publish_octomap_full': 'true',
 
+            'subscribe_rgbd': 'false',
+            
             # 3D LiDAR point cloud
             'subscribe_scan_cloud': 'true',
             'scan_cloud_topic': '/a200_0000/sensors/lidar3d_0/points',
 
-            'subscribe_scan': 'true',
-            'scan_topic': '/a200_0000/sensors/lidar3d_0/scan',
+            # 'subscribe_scan': 'true',
+            # 'scan_topic': '/a200_0000/sensors/lidar3d_0/scan',
 
             # Use the robot's existing odometry
-            'visual_odometry': 'false',
-            'icp_odometry': 'false',
+            'visual_odometry': 'true',
+            'icp_odometry': 'true',
 
             # Synchronize RGB and depth messages approximately
             'approx_sync': 'true',
 
             # Show RTAB-Map's visualization
-            'rtabmap_viz': 'true',
-            # 'rtabmap_viz': 'false',
+            # 'rtabmap_viz': 'true',
+            'rtabmap_viz': 'false',
+
+            'Icp/Strategy': '0',
+            'Icp/Iterations': '10',
+            'Icp/VoxelSize': '0.10',
+            'Icp/MaxCorrespondenceDistance': '1.0',
+            'Icp/MaxTranslation': '3.0',
+            'Icp/PointToPlane': 'true',
+            'Icp/PointToPlaneK': '20',
+            'Icp/CorrespondenceRatio': '0.01',
+            'Odom/Strategy': '0',
+
+            'RGBD/NeighborLinkRefining': 'true',
+            'RGBD/ProximityBySpace': 'true',
+            'RGBD/ProximityByTime': 'false',
+            'RGBD/ProximityPathMaxNeighbors': '10',
+            'RGBD/OptimizeFromGraphEnd': 'false',
 
             'args': (
                 '--delete_db_on_start '
-                '--Grid/3D false '
+                '--Grid/3D true '
+                '--Grid/RayTracing true '
                 '--Grid/NormalsSegmentation false '
                 '--Grid/MaxGroundHeight 0.15 '
-                '--Grid/MaxObstacleHeight 1.8'
-                '--Grid/Sensor 0 '
+                '--Grid/MaxObstacleHeight 1.8 '
+                '--Grid/CellSize 0.2 '
+                '--Grid/Sensor 2 '
                 '--Grid/Scan2dUnknownSpaceFilled true '
-                '--Grid/RangeMax 8.0'
+                '--Grid/RangeMax 8.0 '
+                '--Reg/Force3DoF true '
+                '--RGBD/CreateOccupancyGrid true '
             ),
         }.items(),
     )
@@ -91,7 +109,7 @@ def generate_launch_description():
     rtabmap_group = GroupAction(
         actions=[
             SetRemap(
-                src='/rtabmap/grid_prob_map',
+                src='/rtabmap/octomap_grid',
                 dst='/map',
             ),
             rtabmap_launch,
