@@ -106,6 +106,7 @@ class PathPlannerNode(Node):
 
         self.current_tree = None
         self.current_leaf_node = None
+        self.current_path = None
 
         # self.frontier_percentage_threshold = 0.01  # 1%
         # self.exploration_complete = False
@@ -162,20 +163,29 @@ class PathPlannerNode(Node):
         # if frontier_percentage <= self.frontier_percentage_threshold:
         #     self.exploration_complete = True
 
+    
     def _on_map(self, msg: OccupancyGrid) -> None:
-        """Trigger planning when a new map arrives."""
-        # self.get_logger().info("Map Received")
+        """Trigger planning only when needed."""
         self._latest_map = msg
 
         pose = self.get_robot_pose()
         if pose is None:
             return
 
-        x, y, yaw = pose
-        path = self.plan_path((x, y, yaw),msg,self._latest_frontier)
+        # No active path: generate one
+        if self.current_path is None or len(self.current_path.poses) == 0:
+            self.plan_path(pose, msg, self._latest_frontier)
 
-        if path is None:
-            return
+        # Goal reached: generate a new path
+        elif self.check_if_goal_is_reached(pose):
+            self.current_path = None
+            self.plan_path(pose, msg, self._latest_frontier)
+
+        # Current path blocked: generate a new path
+        elif self.check_if_collision_on_path(msg, pose):
+            self.current_path = None
+            self.plan_path(pose, msg, self._latest_frontier)
+
 
     def _coordinates_detected_object(self, msg):
         for detection in msg.detections:
@@ -346,54 +356,40 @@ class PathPlannerNode(Node):
         index = heuristic_values.index(heuristic_value)
         best_leaf_node = tree.leaf_nodes[index]
 
-        # Calculate the heuristic value of the current path to be able to compare it to the new one 
-        current_heuristic_value = self.calculate_current_heuristic(self.current_leaf_node, inflated_grid, min_x, min_y, resolution, frontier_coords, start[0], start[1])
+            
+        path_msg = Path()
+        path_msg.header.stamp = self.get_clock().now().to_msg()
+        path_msg.header.frame_id = "map"
 
-        node = self.current_leaf_node
-        collision = False
-        # Checks that every node and path between the nodes are still unoccupied
-        while node is not None and node.parent is not None:
-            collision = self.collision_check(node.x, node.y, node.parent.x, node.parent.y, inflated_grid, min_x, min_y, resolution)
+        # Extract the path from the leaf node to the root (the robot's position)
+        node = best_leaf_node
+        while node is not None:
+            pose = PoseStamped()
+            pose.header.stamp = path_msg.header.stamp
+            pose.header.frame_id = "map"
 
-            # Stops checking if the current path has a collision (if a previously unknown square 
-            # on the path has become occupied)
-            if collision:
-                break
+            pose.pose.position.x = node.x
+            pose.pose.position.y = node.y
 
+            path_msg.poses.insert(0, pose)
             node = node.parent
 
+        if len(path_msg.poses) < 2:
+            return None
 
-        # If the heuristic value of the new path is better than the heuristic value of the old path
-        # we send the new path to the controller. If the heuristic value is worse we don't save the
-        # new path and continue travelling along the current path.
-        if heuristic_value + abs(heuristic_value) * 5 < current_heuristic_value or distance < self.minimum_travel_distance or collision:
-            path_msg = Path()
-            path_msg.header.stamp = self.get_clock().now().to_msg()
-            path_msg.header.frame_id = "map"
+        # Publish the path
+        self.path_pub.publish(path_msg)
 
-            # Extract the path from the leaf node to the root (the robot's position)
-            node = best_leaf_node
-            while node is not None:
-                pose = PoseStamped()
-                pose.header.stamp = path_msg.header.stamp
-                pose.header.frame_id = "map"
+        # Remember the active path  
+        self.current_path = path_msg
 
-                pose.pose.position.x = node.x
-                pose.pose.position.y = node.y
+        # Save the new tree and the goal node
+        self.current_tree = tree
+        self.current_leaf_node = best_leaf_node
 
-                path_msg.poses.insert(0, pose)
-                node = node.parent
+        self.publish_tree(self.current_tree)
 
-            # Publish the path
-            self.path_pub.publish(path_msg)
-
-            # Save the new tree and the goal node
-            self.current_tree = tree
-            self.current_leaf_node = best_leaf_node
-
-            self.publish_tree(self.current_tree)
-
-            return path_msg
+        return path_msg
 
     # Checks if any grid squares between point_a and point_b are occupied
     
@@ -481,7 +477,108 @@ class PathPlannerNode(Node):
 
         return information_gain
 
+
+    def check_if_goal_is_reached(self, robot_pose):
+        #1. goal point, end of the path
+        goal_point = self.current_path.poses[-1].pose.position
+        g_x, g_y, = goal_point.x, goal_point.y
+
+        #2. the robots current pose
+        c_x, c_y, c_yaw = robot_pose
+
+        #3. calculate the euclidian distance between current position and the goal position (end of the path)
+        distance = math.sqrt((g_x - c_x)**2 + (g_y - c_y)**2)
+
+        #4. check if that is with the threshold
+        if distance < self.minimum_travel_distance:
+            #5. if the goal is reached
+            return True
+        else:
+            return False
+
     
+    def check_if_collision_on_path(self, map_msg, robot_pose):
+        # 1. Get current path
+        if self.current_path is None:
+            return False
+
+        path_points = self.current_path.poses
+
+        if len(path_points) < 2:
+            return False
+
+        robot_x, robot_y, _ = robot_pose
+        closest_segment_index = 0
+        minimum_distance = float("inf")
+
+        # 2. Find the closest path segment to the robot
+        for i in range(len(path_points) - 1):
+            point_a = path_points[i].pose.position
+            point_b = path_points[i + 1].pose.position
+
+            dx = point_b.x - point_a.x
+            dy = point_b.y - point_a.y
+            segment_length_squared = dx**2 + dy**2
+
+            if segment_length_squared == 0:
+                continue
+
+            t = ((robot_x - point_a.x) * dx +
+                (robot_y - point_a.y) * dy) / segment_length_squared
+
+            t = max(0.0, min(1.0, t))
+
+            closest_x = point_a.x + t * dx
+            closest_y = point_a.y + t * dy
+
+            distance = math.sqrt(
+                (robot_x - closest_x)**2 +
+                (robot_y - closest_y)**2
+            )
+
+            if distance < minimum_distance:
+                minimum_distance = distance
+                closest_segment_index = i
+
+        # 3. Get occupancy grid
+        width = map_msg.info.width
+        height = map_msg.info.height
+        resolution = map_msg.info.resolution
+
+        min_x = map_msg.info.origin.position.x
+        min_y = map_msg.info.origin.position.y
+
+        grid_2d = np.array(
+            map_msg.data, dtype=np.int8
+        ).reshape(height, width)
+
+        # 4. Inflate occupancy grid
+        inflated_grid = self.inflate_map(grid_2d, resolution)
+
+        # 5. Check only the remaining path segments
+        for i in range(closest_segment_index, len(path_points) - 1):
+            point_a = path_points[i].pose.position
+            point_b = path_points[i + 1].pose.position
+
+            if i == closest_segment_index:
+                start_x = robot_x
+                start_y = robot_y
+            else:
+                start_x = point_a.x
+                start_y = point_a.y
+
+            collision = self.collision_check(
+                start_x, start_y,
+                point_b.x, point_b.y,
+                inflated_grid, min_x, min_y, resolution
+            )
+
+            if collision:
+                return True
+
+        # 6. No obstacle blocks the remaining path
+        return False
+
 
 
     def publish_tree(self, tree):
