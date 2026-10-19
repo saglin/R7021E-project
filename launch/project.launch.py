@@ -62,7 +62,7 @@ def generate_launch_description():
             # 'scan_topic': '/a200_0000/sensors/lidar3d_0/scan',
 
             # Use the robot's existing odometry
-            'visual_odometry': 'true',
+            'visual_odometry': 'false',
             'icp_odometry': 'true',
 
             # Synchronize RGB and depth messages approximately
@@ -72,22 +72,6 @@ def generate_launch_description():
             # 'rtabmap_viz': 'true',
             'rtabmap_viz': 'false',
 
-            'Icp/Strategy': '0',
-            'Icp/Iterations': '10',
-            'Icp/VoxelSize': '0.10',
-            'Icp/MaxCorrespondenceDistance': '1.0',
-            'Icp/MaxTranslation': '3.0',
-            'Icp/PointToPlane': 'true',
-            'Icp/PointToPlaneK': '20',
-            'Icp/CorrespondenceRatio': '0.01',
-            'Odom/Strategy': '0',
-
-            'RGBD/NeighborLinkRefining': 'true',
-            'RGBD/ProximityBySpace': 'true',
-            'RGBD/ProximityByTime': 'false',
-            'RGBD/ProximityPathMaxNeighbors': '10',
-            'RGBD/OptimizeFromGraphEnd': 'false',
-
             'args': (
                 '--delete_db_on_start '
                 '--Grid/3D true '
@@ -95,12 +79,30 @@ def generate_launch_description():
                 '--Grid/NormalsSegmentation false '
                 '--Grid/MaxGroundHeight 0.15 '
                 '--Grid/MaxObstacleHeight 1.8 '
-                '--Grid/CellSize 0.2 '
+                '--Grid/CellSize 0.1 '
                 '--Grid/Sensor 2 '
                 '--Grid/Scan2dUnknownSpaceFilled true '
                 '--Grid/RangeMax 8.0 '
                 '--Reg/Force3DoF true '
                 '--RGBD/CreateOccupancyGrid true '
+
+                '--Reg/Strategy 1 '
+
+                # '--Icp/Strategy 0 '
+                # '--Icp/Iterations 10 '
+                # '--Icp/VoxelSize 0.10 '
+                # '--Icp/MaxCorrespondenceDistance 1.0 '
+                # '--Icp/MaxTranslation 3.0 '
+                # '--Icp/PointToPlane true '
+                # '--Icp/PointToPlaneK 20 '
+                # '--Icp/CorrespondenceRatio 0.01 '
+                # '--Odom/Strategy 0 '
+    
+                # '--RGBD/NeighborLinkRefining true '
+                # '--RGBD/ProximityBySpace true '
+                # '--RGBD/ProximityByTime false '
+                # '--RGBD/ProximityPathMaxNeighbors 10 '
+                # '--RGBD/OptimizeFromGraphEnd false '
             ),
         }.items(),
     )
