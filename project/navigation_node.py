@@ -14,7 +14,7 @@ from rclpy.duration import Duration
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, DurabilityPolicy
 
 from geometry_msgs.msg import PoseStamped, Quaternion
-from visualization_msgs.msg import Marker
+from visualization_msgs.msg import Marker, MarkerArray
 from geometry_msgs.msg import Point
 from nav_msgs.msg import Path, OccupancyGrid
 from builtin_interfaces.msg import Time as TimeMsg
@@ -70,6 +70,7 @@ class PathPlannerNode(Node):
         # Publishers (add path publisher here)
         self.path_pub = self.create_publisher(Path, path_topic, 1)
         self.path_non_semantic_pub = self.create_publisher(Path, self.non_semantic_path_topic, 1)
+        self.detected_objects_marker_pub = self.create_publisher(MarkerArray, '/saved_objects', 10)
         self.tree_pub = self.create_publisher(Marker, 'tree_nodes', 1)
 
         # Subscribers
@@ -115,6 +116,7 @@ class PathPlannerNode(Node):
         # self.exploration_complete = False
 
         self.better_with_semantic_count = 0
+        self.total_tree_builds = 0
 
 
     # ----------------- TF Helper -----------------
@@ -185,6 +187,8 @@ class PathPlannerNode(Node):
             if detected_confidance > 0.8:
                 #label
                 detected_label = detection.results[0].hypothesis.class_id
+                if detected_label not in self.object_value_list.keys():
+                    continue
                 
                 object_point = PointStamped()
                 object_point.header = msg.header
@@ -222,6 +226,7 @@ class PathPlannerNode(Node):
                 else:
                     self.detected_object_list.append((x, y, detected_label, dected_id))
 
+        self.publish_detected_objects()
            
     
 
@@ -381,9 +386,10 @@ class PathPlannerNode(Node):
         index = non_semantic_heuristic_values.index(non_semantic_heuristic_value)
         best_non_semantic_leaf_node = tree.leaf_nodes[index]
 
+        self.total_tree_builds += 1
         if best_leaf_node != best_non_semantic_leaf_node:
             self.better_with_semantic_count += 1
-            self.get_logger().info(f'Using semantic path. Total:{self.better_with_semantic_count}')
+            self.get_logger().info(f'Using semantic path. Better with Semantic: {self.better_with_semantic_count} Total:{self.total_tree_builds}')
 
         # Publish the path
         path_msg = self.create_path_msg(best_leaf_node)
@@ -662,6 +668,91 @@ class PathPlannerNode(Node):
             marker.points.append(p2)
 
         self.tree_pub.publish(marker)
+
+
+
+    def publish_detected_objects(self):
+        """Publish detected objects as spheres and text labels in RViz."""
+        marker_array = MarkerArray()
+        stamp = self.get_clock().now().to_msg()
+
+        # Track how many objects were published previously so that
+        # markers for removed objects can be deleted.
+        current_count = len(self.detected_object_list)
+
+        for index, (x, y, label, detected_id) in enumerate(self.detected_object_list):
+            # Sphere marker
+            sphere = Marker()
+            sphere.header.frame_id = self.global_frame
+            sphere.header.stamp = stamp
+            sphere.ns = "detected_objects"
+            sphere.id = index
+            sphere.type = Marker.SPHERE
+            sphere.action = Marker.ADD
+
+            sphere.pose.position.x = float(x)
+            sphere.pose.position.y = float(y)
+            sphere.pose.position.z = 0.15
+            sphere.pose.orientation.w = 1.0
+
+            sphere.scale.x = 0.5
+            sphere.scale.y = 0.5
+            sphere.scale.z = 0.5
+
+            sphere.color.r = 1.0
+            sphere.color.g = 0.0
+            sphere.color.b = 0.0
+            sphere.color.a = 1.0
+
+            sphere.lifetime.sec = 0
+            marker_array.markers.append(sphere)
+
+            # Text label marker
+            text = Marker()
+            text.header.frame_id = self.global_frame
+            text.header.stamp = stamp
+            text.ns = "detected_object_labels"
+            text.id = index
+            text.type = Marker.TEXT_VIEW_FACING
+            text.action = Marker.ADD
+
+            text.pose.position.x = float(x)
+            text.pose.position.y = float(y)
+            text.pose.position.z = 0.45
+            text.pose.orientation.w = 1.0
+
+            text.color.r = 1.0
+            text.color.g = 0.0
+            text.color.b = 0.0
+            text.color.a = 1.0
+
+            text.scale.x = 1.0
+            text.scale.y = 1.0
+            text.scale.z = 1.0
+
+            text.text = f"{label}"
+            text.lifetime.sec = 0
+            marker_array.markers.append(text)
+
+        # Remove leftover markers if the list becomes shorter.
+        previous_count = getattr(self, "_previous_object_marker_count", 0)
+
+        for index in range(current_count, previous_count):
+            for namespace in (
+                "detected_objects",
+                "detected_object_labels",
+            ):
+                marker = Marker()
+                marker.header.frame_id = self.global_frame
+                marker.header.stamp = stamp
+                marker.ns = namespace
+                marker.id = index
+                marker.action = Marker.DELETE
+                marker_array.markers.append(marker)
+
+        self._previous_object_marker_count = current_count
+
+        self.detected_objects_marker_pub.publish(marker_array)
 
     
     # Inflates the occupied squares of the occupancy grid.
