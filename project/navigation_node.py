@@ -56,6 +56,7 @@ class PathPlannerNode(Node):
         self.declare_parameter('base_frame', 'base_link')
         self.declare_parameter('tf_timeout_sec', 0.5)
         self.detected_objects_topic = '/detected_objects'
+        self.non_semantic_path_topic = '/non_semantic_path'
 
         map_topic: str = self.get_parameter('map_topic').get_parameter_value().string_value
         frontier_topic: str = self.get_parameter('frontier_topic').get_parameter_value().string_value
@@ -68,6 +69,7 @@ class PathPlannerNode(Node):
 
         # Publishers (add path publisher here)
         self.path_pub = self.create_publisher(Path, path_topic, 1)
+        self.path_non_semantic_pub = self.create_publisher(Path, self.non_semantic_path_topic, 1)
         self.tree_pub = self.create_publisher(Marker, 'tree_nodes', 1)
 
         # Subscribers
@@ -112,6 +114,8 @@ class PathPlannerNode(Node):
         # self.frontier_percentage_threshold = 0.01  # 1%
         # self.exploration_complete = False
 
+        self.better_with_semantic_count = 0
+
 
     # ----------------- TF Helper -----------------
 
@@ -144,26 +148,6 @@ class PathPlannerNode(Node):
         """Store the latest frontier map (could be used by your planner)."""
         self._latest_frontier = msg
 
-        # # Count total cells in the frontier map
-        # total_cells = msg.info.width * msg.info.height
-
-        # # makes sure that the frontier map isn't empty
-        # if total_cells == 0:
-        #     return
-
-        # # Count the frontier cells
-        # frontier_count = 0
-        # for cell in msg.data:
-        #     if cell > 0:
-        #         frontier_count += 1
-
-        # # Calculate the percentage of the map that is frontier
-        # frontier_percentage = frontier_count / total_cells
-
-        # # Stop planning when frontiers occupy 1% or less of the map
-        # if frontier_percentage <= self.frontier_percentage_threshold:
-        #     self.exploration_complete = True
-
     def _on_map(self, msg: OccupancyGrid) -> None:
         """Trigger planning when a new map arrives."""
         # self.get_logger().info("Map Received")
@@ -191,7 +175,7 @@ class PathPlannerNode(Node):
         
 
     def _coordinates_detected_object(self, msg):
-        self.get_logger().info(f"Detection frame: {msg.header.frame_id}")
+        # self.get_logger().info(f"Detection frame: {msg.header.frame_id}")
         for detection in msg.detections:
             # Label
             if len(detection.results) == 0:
@@ -377,11 +361,13 @@ class PathPlannerNode(Node):
     
         # Calculate the heuristic values of all the leaf nodes in the tree
         heuristic_values = []
+        non_semantic_heuristic_values = []
         
         for leaf_node in tree.leaf_nodes:
 
-            heuristic_value = self.calculate_heuristic(leaf_node, inflated_grid, min_x, min_y, resolution, frontier_grid_2d, frontier_min_x, frontier_min_y, frontier_resolution)
+            heuristic_value, non_semantic_heuristic_value = self.calculate_heuristic(leaf_node, inflated_grid, min_x, min_y, resolution, frontier_grid_2d, frontier_min_x, frontier_min_y, frontier_resolution)
             heuristic_values.append(heuristic_value)
+            non_semantic_heuristic_values.append(non_semantic_heuristic_value)
 
 
 
@@ -390,26 +376,23 @@ class PathPlannerNode(Node):
         index = heuristic_values.index(heuristic_value)
         best_leaf_node = tree.leaf_nodes[index]
 
-        path_msg = Path()
-        path_msg.header.stamp = self.get_clock().now().to_msg()
-        path_msg.header.frame_id = "map"
+        # Find the best non semantic heuristic value and which node it corresponds to
+        non_semantic_heuristic_value = min(non_semantic_heuristic_values)
+        index = non_semantic_heuristic_values.index(non_semantic_heuristic_value)
+        best_non_semantic_leaf_node = tree.leaf_nodes[index]
 
-        # Extract the path from the leaf node to the root (the robot's position)
-        node = best_leaf_node
-        while node is not None:
-            pose = PoseStamped()
-            pose.header.stamp = path_msg.header.stamp
-            pose.header.frame_id = "map"
-
-            pose.pose.position.x = node.x
-            pose.pose.position.y = node.y
-
-            path_msg.poses.insert(0, pose)
-            node = node.parent
+        if best_leaf_node != best_non_semantic_leaf_node:
+            self.better_with_semantic_count += 1
+            self.get_logger().info(f'Using semantic path. Total:{self.better_with_semantic_count}')
 
         # Publish the path
+        path_msg = self.create_path_msg(best_leaf_node)
         self.path_pub.publish(path_msg)
         self.current_path = path_msg
+
+        # Publish the non-semantic path
+        non_semantic_path_msg = self.create_path_msg(best_non_semantic_leaf_node)
+        self.path_non_semantic_pub.publish(non_semantic_path_msg)
 
         # Save the new tree and the goal node
         self.current_tree = tree
@@ -554,30 +537,32 @@ class PathPlannerNode(Node):
 #👉🏻
     def calculate_heuristic(self, leaf_node, occupancy_grid, min_x, min_y, resolution, frontier_grid, frontier_min_x, frontier_min_y, frontier_resolution):
         
-        information_gain = self.calculate_information_gain(leaf_node, occupancy_grid, min_x, min_y, resolution, frontier_grid, frontier_min_x, frontier_min_y, frontier_resolution)
+        information_gain, non_semantic_information_gain = self.calculate_information_gain(leaf_node, occupancy_grid, min_x, min_y, resolution, frontier_grid, frontier_min_x, frontier_min_y, frontier_resolution)
         heuristic_value = self.distance_gain * leaf_node.distance_to_root - self.ig_coeff * information_gain
-        return heuristic_value
-#👉🏻
-    def calculate_current_heuristic(self, leaf_node, occupancy_grid, min_x, min_y, resolution, frontier_grid, frontier_min_x, frontier_min_y, frontier_resolution, robot_x, robot_y):
+        non_semantic_heuristic_value = self.distance_gain * leaf_node.distance_to_root - self.ig_coeff * non_semantic_information_gain
         
-        information_gain = self.calculate_information_gain(leaf_node, occupancy_grid, min_x, min_y, resolution, frontier_grid, frontier_min_x, frontier_min_y, frontier_resolution)
+        return heuristic_value, non_semantic_heuristic_value
+# #👉🏻
+#     def calculate_current_heuristic(self, leaf_node, occupancy_grid, min_x, min_y, resolution, frontier_grid, frontier_min_x, frontier_min_y, frontier_resolution, robot_x, robot_y):
+        
+#         information_gain, non_semantic_information_gain = self.calculate_information_gain(leaf_node, occupancy_grid, min_x, min_y, resolution, frontier_grid, frontier_min_x, frontier_min_y, frontier_resolution)
 
-        node = leaf_node
-        distance = 0
-        while node is not None:
-            robot_node_distance = math.sqrt((node.x - robot_x)**2 + (node.y - robot_y)**2)
+#         node = leaf_node
+#         distance = 0
+#         while node is not None:
+#             robot_node_distance = math.sqrt((node.x - robot_x)**2 + (node.y - robot_y)**2)
 
-            if robot_node_distance < node.distance_to_parent:
-                distance += robot_node_distance
-                break
+#             if robot_node_distance < node.distance_to_parent:
+#                 distance += robot_node_distance
+#                 break
 
-            else:
-                distance += node.distance_to_parent
+#             else:
+#                 distance += node.distance_to_parent
 
-                node = node.parent
+#                 node = node.parent
 
-        heuristic_value = self.distance_gain * leaf_node.distance_to_root - self.ig_coeff * information_gain
-        return heuristic_value
+#         heuristic_value = self.distance_gain * leaf_node.distance_to_root - self.ig_coeff * information_gain
+#         return heuristic_value
 
 #👉🏻
     def calculate_information_gain(self, leaf_node, occupancy_grid, min_x, min_y, resolution, frontier_grid, frontier_min_x, frontier_min_y, frontier_resolution):
@@ -600,11 +585,7 @@ class PathPlannerNode(Node):
                         if not self.collision_check(leaf_node.x, leaf_node.y, x, y, occupancy_grid, min_x, min_y, resolution):
                             information_gain += 1
 
-        #for x,y,detected_objected,id in self.detected_object_list: 
-        #    object_value = self.object_value_list[detected_objected]
-        #    distance = math.sqrt((x - leaf_node.x)**2 + (y - leaf_node.y)**2)
-        #    if distance < self.lidar_range:
-        #        information_gain += object_value
+        non_semantic_information_gain = information_gain
 
         # only add object value of the highest object value in the detected object list that is within the lidar range
         max_object_value = 0
@@ -617,9 +598,27 @@ class PathPlannerNode(Node):
         information_gain += max_object_value
         
 
-        return information_gain
+        return information_gain, non_semantic_information_gain
 
-    
+    def create_path_msg(self, leaf_node):
+        path_msg = Path()
+        path_msg.header.stamp = self.get_clock().now().to_msg()
+        path_msg.header.frame_id = "map"
+
+        # Extract the path from the leaf node to the root (the robot's position)
+        node = leaf_node
+        while node is not None:
+            pose = PoseStamped()
+            pose.header.stamp = path_msg.header.stamp
+            pose.header.frame_id = "map"
+
+            pose.pose.position.x = node.x
+            pose.pose.position.y = node.y
+
+            path_msg.poses.insert(0, pose)
+            node = node.parent
+
+        return path_msg
 
 
     def publish_tree(self, tree):
