@@ -57,6 +57,8 @@ class CameraNode(Node):
         self.depth_frame = None
         self.camera_info = None
         self.depth_info = None
+        self.confidence_threshold = 2.0  # confidence threshold for publishing detections
+
 
     def image_callback(self, msg):
         # self.get_logger().info("Received camera image")
@@ -134,8 +136,9 @@ class CameraNode(Node):
 
                 # Create a visualization marker for RViz
                 marker, text_marker = self.create_marker(point_base, class_name, box, msg.header.stamp, markers)
-                markers.markers.append(marker)
-                markers.markers.append(text_marker)
+                if confidence >= self.confidence_threshold:
+                    markers.markers.append(marker)
+                    markers.markers.append(text_marker)
 
         self.object_publisher.publish(detections_msg)
         self.marker_publisher.publish(markers)
@@ -315,12 +318,12 @@ class CameraNode(Node):
         marker.pose.position.y = point_base.point.y
         marker.pose.position.z = point_base.point.z
         marker.pose.orientation.w = 1.0
-        marker.scale.x = 0.15
-        marker.scale.y = 0.15
-        marker.scale.z = 0.15
+        marker.scale.x = 0.5
+        marker.scale.y = 0.5
+        marker.scale.z = 0.5
         marker.color.a = 1.0
-        marker.color.r = 0.0
-        marker.color.g = 1.0
+        marker.color.r = 1.0
+        marker.color.g = 0.0
         marker.color.b = 0.0
 
         text_marker = Marker()
@@ -331,15 +334,19 @@ class CameraNode(Node):
         text_marker.type = Marker.TEXT_VIEW_FACING
         text_marker.action = Marker.ADD
         text_marker.pose.position.x = point_base.point.x
-        text_marker.pose.position.y = point_base.point.y
+        text_marker.pose.position.y = point_base.point.y - 0.6
         text_marker.pose.position.z = point_base.point.z + 0.2
         text_marker.pose.orientation.w = 1.0
         text_marker.scale.z = 0.15
         text_marker.color.a = 1.0
         text_marker.color.r = 1.0
-        text_marker.color.g = 1.0
-        text_marker.color.b = 1.0
+        text_marker.color.g = 0.0
+        text_marker.color.b = 0.0
         text_marker.text = class_name
+        # increase font size
+        text_marker.scale.x = 1.0
+        text_marker.scale.y = 1.0
+        text_marker.scale.z = 1.0
 
         return marker, text_marker
 

@@ -12,7 +12,7 @@ slam_toolbox:
     #scan_topic: /a200_0000/sensors/lidar2d_0/scan
     scan_topic: /scan_fixed
 
-    resolution: 0.15
+    resolution: 0.10
     max_laser_range: 19.5 # precis under max
 
     transform_publish_period: 0.05

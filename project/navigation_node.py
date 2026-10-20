@@ -85,13 +85,13 @@ class PathPlannerNode(Node):
 
         self.get_logger().info('PathPlannerNode initialized.')
 
-        self.tree_iterations = 1600
+        self.tree_iterations = 2400
         self.occupancy_threshold = 80
         self.lidar_range = 4 # 3.5
         self.inflation_radius = 0.7
         self.distance_gain = 1.0
         self.ig_coeff = 5.0
-        self.minimum_travel_distance = 0.1
+        self.minimum_travel_distance = 0.5
 #👉🏻
         self.detected_object_gain = None
         self.detected_object_list = []
@@ -362,7 +362,7 @@ class PathPlannerNode(Node):
         # If the heuristic value of the new path is better than the heuristic value of the old path
         # we send the new path to the controller. If the heuristic value is worse we don't save the
         # new path and continue travelling along the current path.
-        if heuristic_value + abs(heuristic_value) * 5 < current_heuristic_value or distance_to_leaf < self.minimum_travel_distance or collision:
+        if heuristic_value + abs(heuristic_value) * 100000 < current_heuristic_value or distance_to_leaf < self.minimum_travel_distance or collision:
             path_msg = Path()
             path_msg.header.stamp = self.get_clock().now().to_msg()
             path_msg.header.frame_id = "map"
@@ -465,11 +465,22 @@ class PathPlannerNode(Node):
                         if not self.collision_check(leaf_node.x, leaf_node.y, x, y, occupancy_grid, min_x, min_y, resolution):
                             information_gain += 1
 
-        for x,y,detected_objected,id in self.detected_object_list: 
-            object_value = self.object_value_list[detected_objected]
+        #for x,y,detected_objected,id in self.detected_object_list: 
+        #    object_value = self.object_value_list[detected_objected]
+        #    distance = math.sqrt((x - leaf_node.x)**2 + (y - leaf_node.y)**2)
+        #    if distance < self.lidar_range:
+        #        information_gain += object_value
+
+        # only add object value of the highest object value in the detected object list that is within the lidar range
+        max_object_value = 0
+        for x,y,detected_objected,id in self.detected_object_list:
+            object_value = self.object_value_list.get(detected_objected, 0)
             distance = math.sqrt((x - leaf_node.x)**2 + (y - leaf_node.y)**2)
             if distance < self.lidar_range:
-                information_gain += object_value
+                max_object_value = max(max_object_value, object_value)
+
+        information_gain += max_object_value
+        
 
         return information_gain
 
