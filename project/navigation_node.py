@@ -389,7 +389,8 @@ class PathPlannerNode(Node):
         self.total_tree_builds += 1
         if best_leaf_node != best_non_semantic_leaf_node:
             self.better_with_semantic_count += 1
-            self.get_logger().info(f'Using semantic path. Better with Semantic: {self.better_with_semantic_count} Total:{self.total_tree_builds}')
+
+        self.get_logger().info(f'Using semantic path. Better with Semantic: {self.better_with_semantic_count} Total:{self.total_tree_builds}')
 
         # Publish the path
         path_msg = self.create_path_msg(best_leaf_node)

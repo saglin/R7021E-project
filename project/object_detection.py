@@ -57,7 +57,7 @@ class CameraNode(Node):
         self.depth_frame = None
         self.camera_info = None
         self.depth_info = None
-        self.confidence_threshold = 2.0  # confidence threshold for publishing detections
+        self.confidence_threshold = 0.8  # confidence threshold for publishing detections
 
 
     def image_callback(self, msg):
