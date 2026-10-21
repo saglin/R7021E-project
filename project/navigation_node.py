@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """
     Creates an RRT* and uses next-best-view using semantic values to determine the most optimal path.
 
@@ -345,7 +346,8 @@ class PathPlannerNode(Node):
                 continue
 
             # Checks the occupancy status of rho_c
-            if inflated_grid[rho_y_index, rho_x_index] < self.occupancy_threshold:
+            if inflated_grid[rho_x_index][rho_y_index] < self.occupancy_threshold:
+
                 # Checks occapancy of every square between N_closest and rho_c
                 if not self.collision_check(N_closest.x, N_closest.y, rho_c_x, rho_c_y, inflated_grid, min_x, min_y, resolution):
                     distance = math.sqrt((rho_c_x - N_closest.x)**2 + (rho_c_y - N_closest.y)**2)
@@ -401,7 +403,8 @@ class PathPlannerNode(Node):
         self.total_tree_builds += 1
         if best_leaf_node != best_non_semantic_leaf_node:
             self.better_with_semantic_count += 1
-            self.get_logger().info(f'Using semantic path. Better with Semantic: {self.better_with_semantic_count} Total:{self.total_tree_builds}')
+
+        self.get_logger().info(f'Using semantic path. Better with Semantic: {self.better_with_semantic_count} Total:{self.total_tree_builds}')
 
         # Publish the path
         path_msg = self.create_path_msg(best_leaf_node)
@@ -541,14 +544,15 @@ class PathPlannerNode(Node):
         xx, yy = line(x0, y0, x1, y1)
 
         # Check map boundaries
-        height, width = occupancy_grid.shape
-        
+        width = len(occupancy_grid)
+        height = len(occupancy_grid[0])
 
-        if np.any((xx < 0) | (xx >= width) | (yy < 0) | (yy >= height)):
+        if np.any((xx < 0) | (xx >= width) |
+                (yy < 0) | (yy >= height)):
             return True
 
         # Check for occupied cells
-        return bool(np.any(occupancy_grid[yy, xx] >= self.occupancy_threshold))
+        return bool(np.any(occupancy_grid[xx, yy] >= self.occupancy_threshold))
 
 
 #👉🏻
@@ -582,16 +586,25 @@ class PathPlannerNode(Node):
 #         return heuristic_value
 
 #👉🏻
-    def calculate_information_gain(self, leaf_node, occupancy_grid, min_x, min_y, resolution, frontier_coords):
+    def calculate_information_gain(self, leaf_node, occupancy_grid, min_x, min_y, resolution, frontier_grid, frontier_min_x, frontier_min_y, frontier_resolution):
+
         information_gain = 0
 
-        if len(frontier_coords) > 0:
-            distances = np.hypot(frontier_coords[:, 0] - leaf_node.x, frontier_coords[:, 1] - leaf_node.y)
-            nearby_frontiers = frontier_coords[distances < self.lidar_range]
+        for index_x in range(len(frontier_grid)):
+            for index_y in range(len(frontier_grid[index_x])):
+                if frontier_grid[index_x][index_y] > 0: # Checks if the square is a frontier
 
-            for fx, fy in nearby_frontiers:
-                if not self.collision_check(leaf_node.x, leaf_node.y, fx, fy, occupancy_grid, min_x, min_y, resolution):
-                    information_gain += 1
+                    x = index_x * frontier_resolution + frontier_resolution / 2 + frontier_min_x
+                    y = index_y * frontier_resolution + frontier_resolution / 2 + frontier_min_y
+
+                    # Calculates the distance from the frontier to the leaf node 
+                    distance = math.sqrt((x - leaf_node.x)**2 + (y - leaf_node.y)**2)
+
+                    # If the distance is within the lidar range it might be discovered if the 
+                    # robot moves to the leaf. 
+                    if distance < self.lidar_range:
+                        if not self.collision_check(leaf_node.x, leaf_node.y, x, y, occupancy_grid, min_x, min_y, resolution):
+                            information_gain += 1
 
         non_semantic_information_gain = information_gain
 
@@ -817,7 +830,7 @@ class Tree_Nodes():
 
         if children != None:
             for child in children:
-                self.child.append(child)
+                self.append(child)
 
         
 def main() -> None:
