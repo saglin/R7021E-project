@@ -40,6 +40,8 @@ setup(
             'path_planner_node = project.navigation_node:main',
             'frontier_detector_node = project.frontier_detector_node:main',
             'path_follower = project.path_follower_node:main',
+            'scan_fixer = project.scan_fixer:main',
+            #'mpc_controller = project.mpc_controller:main',
         ],
     },
 )

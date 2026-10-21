@@ -129,6 +129,7 @@ def generate_launch_description():
             parameters=[
                 {
                     'use_sim_time': True,
+                    'visited_radius': 4.0,
                 }
             ],
         ),
@@ -164,4 +165,34 @@ def generate_launch_description():
                 }
             ],
         ),
+        
+        # ----------------------------------------------------------
+        # Scan fixer
+        # ----------------------------------------------------------
+        Node(
+            package='project',
+            executable='scan_fixer',
+            name='scan_fixer',
+            output='screen',
+            parameters=[
+                {
+                    'use_sim_time': True,
+                }
+            ],
+        ),
+
+        # ----------------------------------------------------------
+        # MPC Controller
+        # ----------------------------------------------------------
+        #Node(
+        #    package='project',
+        #    executable='mpc_controller',
+        #    name='mpc_controller',
+        #    output='screen',
+        #    parameters=[
+        #        {
+        #            'use_sim_time': True,
+        #        }
+        #    ],
+        #),
     ])
