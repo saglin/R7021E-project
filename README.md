@@ -8,4 +8,4 @@ In simple robot exploration the robot’s main focus is to navigate through an u
 This project aims to implement the semantic exploration of a Clearpath Husky A200 in a simulated, static environment. The robot uses object detection and localisation to detect objects of interest with a camera, and remember the object locations relative to an occupancy grid. The robot uses the semantic values of the objects to determine exploration priority. The goal is to evaluate the performance of the semantic exploration in comparison to simple exploration, where no semantic values in the robot’s environment are used.
 
 ## Video of experiment
-https://www.youtube.com/watch?v=10vzFfcSj4Y
+https://youtu.be/yk0zc8PdxXg
