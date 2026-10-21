@@ -1,3 +1,18 @@
+"""
+    This node performs object detection with YOLOv8n-SEG. It uses the RGB and depth image to estimate the position of the object.
+    It publishes the detected object position in 'map' frame.
+
+    Subscription topics:
+        /a200_0000/sensors/camera_0/color/image: RGB image as an Image type. Used for object detection.
+        /a200_0000/sensors/camera_0/color/camera_info: Camera info of the RGB image as CameraInfo type.
+        /a200_0000/sensors/camera_0/depth/image: Depth image as an Image type. Used to extract the object position.
+        /a200_0000/sensors/camera_0/depth/camera_info: Depth camera info as CameraInfo type.
+
+    Publishing topics:
+        /detected_objects: All the currently detected objects as a Detection3DArray
+        /detection_markers: All currently visible objects as a MarkerArray, for visualisation in RViz.
+"""
+
 import rclpy
 from rclpy.node import Node
 
@@ -11,7 +26,6 @@ import numpy as np
 from sensor_msgs.msg import CameraInfo
 from image_geometry import PinholeCameraModel
 from geometry_msgs.msg import PointStamped
-
 from vision_msgs.msg import Detection3DArray, Detection3D
 from vision_msgs.msg import ObjectHypothesisWithPose
 from visualization_msgs.msg import Marker, MarkerArray
@@ -20,7 +34,6 @@ import tf2_ros
 from tf2_geometry_msgs import do_transform_point
 
 class CameraNode(Node):
-
     def __init__(self):
         super().__init__('camera_node')
 
@@ -29,22 +42,16 @@ class CameraNode(Node):
         camera_depth_topic = '/a200_0000/sensors/camera_0/depth/image'
         camera_depth_info_topic = '/a200_0000/sensors/camera_0/depth/camera_info'
         YOLO_MODEL_PATH = 'yolov8n-seg.pt'
-        self.target_frame = 'map'     # Change to 'map' later
-
+        self.target_frame = 'map'
         detected_objects_topic = '/detected_objects'
 
         self.model = YOLO(YOLO_MODEL_PATH)
-
         self.bridge = CvBridge()
 
-        self.image_subscription = self.create_subscription(Image, camera_image_topic, 
-                                                     self.image_callback, 10)
-        self.depth_subscription = self.create_subscription(Image, camera_depth_topic,
-                                                           self.depth_callback, 10)
-        self.image_info_subscription = self.create_subscription(CameraInfo, camera_image_info_topic,
-                                                                self.image_info_callback, 10)
-        self.depth_info_subscription = self.create_subscription(CameraInfo, camera_depth_info_topic,
-                                                                self.depth_info_callback, 10)
+        self.image_subscription = self.create_subscription(Image, camera_image_topic, self.image_callback, 10)
+        self.depth_subscription = self.create_subscription(Image, camera_depth_topic, self.depth_callback, 10)
+        self.image_info_subscription = self.create_subscription(CameraInfo, camera_image_info_topic, self.image_info_callback, 10)
+        self.depth_info_subscription = self.create_subscription(CameraInfo, camera_depth_info_topic, self.depth_info_callback, 10)
 
         self.object_publisher = self.create_publisher(Detection3DArray, detected_objects_topic, 10)
         self.marker_publisher = self.create_publisher(MarkerArray, '/detection_markers', 10)
@@ -57,7 +64,7 @@ class CameraNode(Node):
         self.depth_frame = None
         self.camera_info = None
         self.depth_info = None
-        self.confidence_threshold = 2.0  # confidence threshold for publishing detections
+        self.confidence_threshold = 0.8  # Confidence threshold for publishing detection markers
 
 
     def image_callback(self, msg):
@@ -131,7 +138,6 @@ class CameraNode(Node):
                 detection = self.create_detection_msg(point_base, class_name, confidence, box, msg.header.stamp)
                 detections_msg.detections.append(detection)
 
-                # Draw bounding box and mask on the frame for visualization
                 frame = self.draw_bounding_box(frame, box, class_name, confidence, point_base, mask)
 
                 # Create a visualization marker for RViz
@@ -172,25 +178,17 @@ class CameraNode(Node):
     def get_depth_of_mask(self, mask):
 
         if mask.shape != self.depth_frame.shape:
-            self.get_logger().warn(
-                f"Mask shape {mask.shape} does not match "
-                f"depth shape {self.depth_frame.shape}"
-            )
+            self.get_logger().warn(f"Mask shape {mask.shape} does not match depth shape {self.depth_frame.shape}")
             return None
 
         # Get all depth values inside the segmentation mask
         object_depths = self.depth_frame[mask]
 
         # Remove invalid depth values
-        valid_depths = object_depths[
-            np.isfinite(object_depths) &
-            (object_depths > 0)
-        ]
+        valid_depths = object_depths[np.isfinite(object_depths) & (object_depths > 0)]
 
         if len(valid_depths) < 10:
-            self.get_logger().warn(
-                "Not enough valid depth pixels inside mask."
-            )
+            self.get_logger().warn("Not enough valid depth pixels inside mask.")
             return None
 
         # Calculate median depth
@@ -198,42 +196,33 @@ class CameraNode(Node):
 
         # Calculate Median Absolute Deviation (MAD)
         absolute_deviation = np.abs(valid_depths - median_depth)
-
         mad = np.median(absolute_deviation)
 
         # Avoid division by zero
         if mad < 1e-6:
             filtered_depths = valid_depths
         else:
-
-            # Robust modified z-score
             modified_z_score = (0.6745 * absolute_deviation / mad)
-
-            # Keep only non-outliers
             filtered_depths = valid_depths[modified_z_score < 3.5]
 
         if len(filtered_depths) < 10:
             self.get_logger().warn("Too few depth pixels remain after outlier rejection.")
             return None
 
-        # Calculate final depth estimate
+        # Final depth estimate
         depth = np.median(filtered_depths)
 
         return float(depth)
 
     def get_3d_coordinates(self, mask):
         if self.camera_info is None:
-            self.get_logger().error(
-                "Camera model not initialized."
-            )
+            self.get_logger().error("Camera model not initialized.")
             return None
 
         depth = self.get_depth_of_mask(mask)
 
         if depth is None:
-            self.get_logger().warn(
-                "No valid depth found inside object mask."
-            )
+            self.get_logger().warn("No valid depth found inside object mask.")
             return None
 
         # Find the center of the mask
@@ -246,20 +235,15 @@ class CameraNode(Node):
         v = int(np.mean(ys))
 
         # Convert pixel to 3D ray
-        ray = self.camera_model.projectPixelTo3dRay(
-            (u, v)
-        )
+        ray = self.camera_model.projectPixelTo3dRay((u, v))
 
         ray = np.array(ray)
-
-        # Do NOT normalize the ray
         point_3d = ray * depth
 
         return point_3d
 
     def convert_to_point_stamped(self, point_3d, stamp):
         point_stamped = PointStamped()
-        # point_stamped.header.stamp = stamp
         point_stamped.header.stamp = rclpy.time.Time().to_msg()
         point_stamped.header.frame_id = self.camera_info.header.frame_id
         point_stamped.point.x = point_3d[0]
@@ -293,7 +277,6 @@ class CameraNode(Node):
         detection.bbox.center.position.y = point_base.point.y
         detection.bbox.center.position.z = point_base.point.z
 
-        # We don't currently know the physical 3D size
         detection.bbox.size.x = 0.0
         detection.bbox.size.y = 0.0
         detection.bbox.size.z = 0.0
@@ -304,6 +287,7 @@ class CameraNode(Node):
 
         return detection
 
+    # Creates a marker for visualization in RViz
     def create_marker(self, point_base, class_name, box, stamp, markers):
         marker = Marker()
         marker.header.stamp = stamp
@@ -343,6 +327,7 @@ class CameraNode(Node):
         text_marker.color.g = 0.0
         text_marker.color.b = 0.0
         text_marker.text = class_name
+        
         # increase font size
         text_marker.scale.x = 1.0
         text_marker.scale.y = 1.0
@@ -359,20 +344,15 @@ class CameraNode(Node):
         x1, y1, x2, y2 = box.xyxy[0].cpu().numpy().astype(int)
 
         cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-        cv2.putText(frame, f"{class_name} {confidence:.2f}", (x1, y1 - 10),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
-        cv2.putText(frame, f"3D: ({point_base.point.x:.2f}, {point_base.point.y:.2f}, {point_base.point.z:.2f})", (x1, y2 + 20),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+        cv2.putText(frame, f"{class_name} {confidence:.2f}", (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+        cv2.putText(frame, f"3D: ({point_base.point.x:.2f}, {point_base.point.y:.2f}, {point_base.point.z:.2f})", (x1, y2 + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
 
         return frame
 
 def main(args=None):
     rclpy.init(args=args)
-
     node = CameraNode()
-
     rclpy.spin(node)
-
     node.destroy_node()
     rclpy.shutdown()
 
