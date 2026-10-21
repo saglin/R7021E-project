@@ -1,3 +1,12 @@
+'''
+    A distance based path follower that uses P-controllers for the velocity and angular velocity separately.
+    
+    Subscribers:
+        'path', Type: Path, the planned path to follow
+    Publishers:
+        '/a200_0000/cmd_vel', Type: TwistStamped, desired velocities for the robot
+'''
+
 #!/usr/bin/env python3
 # frontier_detector_node.py
 
