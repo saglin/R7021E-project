@@ -6,6 +6,15 @@ from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import LaserScan
 
 
+'''
+Takes the original scan from the lidar and replaces all no-return beams with the maximum range of the sensor
+
+Subscription topics:
+    /a200_0000/sensors/lidar2d_0/scan (sensor_msgs/LaserScan)
+Publishing topics:
+    /scan_fixed (sensor_msgs/LaserScan)
+
+'''
 class ScanFixer(Node):
     def __init__(self):
         super().__init__('scan_fixer')
