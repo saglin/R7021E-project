@@ -1,4 +1,17 @@
-#!/usr/bin/env python3
+"""
+    Creates an RRT* and uses next-best-view using semantic values to determine the most optimal path.
+
+    Subscribtion topics:
+        map: The occupancy map used for path plannning.
+        frontiers: An OccupancyGrid of the frontiers.
+        /detected_objects: The objects currently in veiw of the object detection model. 
+
+    Publihsing topics:
+        path: The current most optimal path.
+        /non_semantic_path: The path that would have been chosen without the semantic values. Used purely for visualization.
+        tree_nodes: The current RRT* for visualization in RViz.
+        /saved_objects: All the currently saved objects used for semantic exploration. 
+"""
 
 import math
 from typing import Optional, Tuple, List
