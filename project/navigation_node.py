@@ -36,7 +36,6 @@ from vision_msgs.msg import Detection3DArray
 from scipy.spatial import KDTree
 from geometry_msgs.msg import PointStamped
 from tf2_geometry_msgs import do_transform_point
-from scipy.ndimage import binary_dilation
 
 
 
@@ -760,50 +759,28 @@ class PathPlannerNode(Node):
     
     # Inflates the occupied squares of the occupancy grid.
     def inflate_map(self, grid, resolution):
-        grid_array = np.array(grid, dtype=np.int8)
-        
-        # Calculate kernel radius in grid cells
-        radius_cells = math.ceil(self.inflation_radius / resolution)
-        
-        # Create a circular kernel (structuring element)
-        y_idx, x_idx = np.ogrid[-radius_cells:radius_cells + 1, -radius_cells:radius_cells + 1]
-        kernel = (x_idx**2 + y_idx**2 <= radius_cells**2)
-        
-        # Mask where original grid is occupied
-        obstacle_mask = (grid_array >= self.occupancy_threshold)
-        
-        # Fast C-based dilation across the grid
-        dilated_mask = binary_dilation(obstacle_mask, structure=kernel)
-        
-        # Return dilated map where dilated cells are set to 100
-        inflated_grid = np.copy(grid_array)
-        inflated_grid[dilated_mask] = 100
+        inflated_grid = copy.deepcopy(grid)
+        inflation_cells = math.ceil(self.inflation_radius / resolution)
+        width = len(grid)
+        height = len(grid[0])
 
+        # Iterates through the old occupancy grid and changes the occupancy of the squares around 
+        # all the occupied squares.
+        for x in range(width):
+            for y in range(height):
+                if grid[x][y] >= self.occupancy_threshold:  # Checks if the square is occupied
+                    # Iterates through the cells around the occupied square
+                    for dx in range(-inflation_cells, inflation_cells + 1):
+                        for dy in range(-inflation_cells, inflation_cells + 1):
+                            nx = x + dx
+                            ny = y + dy
 
-
-        #OLD code 
-        # inflated_grid = copy.deepcopy(grid)
-        # inflation_cells = math.ceil(self.inflation_radius / resolution)
-        # width = len(grid)
-        # height = len(grid[0])
-
-        # # Iterates through the old occupancy grid and changes the occupancy of the squares around 
-        # # all the occupied squares.
-        # for x in range(width):
-        #     for y in range(height):
-        #         if grid[x][y] >= self.occupancy_threshold:  # Checks if the square is occupied
-        #             # Iterates through the cells around the occupied square
-        #             for dx in range(-inflation_cells, inflation_cells + 1):
-        #                 for dy in range(-inflation_cells, inflation_cells + 1):
-        #                     nx = x + dx
-        #                     ny = y + dy
-
-        #                     # Checks that the surrounding square is within the map
-        #                     if 0 <= nx < width and 0 <= ny < height:
-        #                         # Only changes nearby squares if they are within a circular radius 
-        #                         # of the original square
-        #                         if dx**2 + dy**2 <= inflation_cells**2:
-        #                             inflated_grid[nx][ny] = 100
+                            # Checks that the surrounding square is within the map
+                            if 0 <= nx < width and 0 <= ny < height:
+                                # Only changes nearby squares if they are within a circular radius 
+                                # of the original square
+                                if dx**2 + dy**2 <= inflation_cells**2:
+                                    inflated_grid[nx][ny] = 100
 
         return inflated_grid
 
