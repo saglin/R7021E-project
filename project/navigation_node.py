@@ -36,6 +36,7 @@ from vision_msgs.msg import Detection3DArray
 from scipy.spatial import KDTree
 from geometry_msgs.msg import PointStamped
 from tf2_geometry_msgs import do_transform_point
+from scipy.ndimage import binary_dilation
 
 
 
